@@ -1,0 +1,90 @@
+const fs = require("fs");
+const path = require("path");
+const { getApiBase, assetCacheDir } = require("./config");
+
+async function apiFetch(pathname, { method = "GET", token, body } = {}) {
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(`${getApiBase()}${pathname}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+  if (!res.ok) {
+    const err = new Error(data?.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+async function claim(code) {
+  return apiFetch("/api/device/claim", {
+    method: "POST",
+    body: { code },
+  });
+}
+
+async function heartbeat(token) {
+  return apiFetch("/api/device/heartbeat", { method: "POST", token });
+}
+
+async function getPlaylist(token) {
+  return apiFetch("/api/device/playlist", { token });
+}
+
+async function postPlayLogs(token, events) {
+  return apiFetch("/api/device/play-logs", {
+    method: "POST",
+    token,
+    body: events,
+  });
+}
+
+async function cacheAsset(token, item) {
+  const ext =
+    item.mimeType === "video/mp4"
+      ? ".mp4"
+      : item.mimeType === "video/webm"
+        ? ".webm"
+        : item.mimeType === "image/png"
+          ? ".png"
+          : item.mimeType === "image/jpeg"
+            ? ".jpg"
+            : item.mimeType === "image/webp"
+              ? ".webp"
+              : ".bin";
+  const dest = path.join(assetCacheDir, `${item.creativeId}${ext}`);
+  if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+    return dest;
+  }
+  const res = await fetch(item.assetUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    throw new Error(`Asset download failed ${res.status}`);
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(dest, buf);
+  return dest;
+}
+
+module.exports = {
+  claim,
+  heartbeat,
+  getPlaylist,
+  postPlayLogs,
+  cacheAsset,
+  apiFetch,
+};

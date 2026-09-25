@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+/**
+ * Headless smoke agent — claim/heartbeat/playlist/cache without Electron GUI.
+ */
+const fs = require("fs");
+const path = require("path");
+const {
+  loadToken,
+  savePlaylistCache,
+  getApiBase,
+  dataDir,
+} = require("./config");
+const api = require("./api");
+
+async function main() {
+  const creds = loadToken();
+  if (!creds?.deviceToken) {
+    console.error("No device token. Run: npm run claim -- --code XXXXXX");
+    process.exit(1);
+  }
+  console.log(`API ${getApiBase()}`);
+  console.log(`Screen ${creds.screenName} (${creds.screenId})`);
+
+  const hb = await api.heartbeat(creds.deviceToken);
+  console.log("heartbeat", hb);
+
+  const playlist = await api.getPlaylist(creds.deviceToken);
+  console.log(`playlist items: ${playlist.items?.length || 0}`);
+
+  const samplePath = path.join(dataDir, "playlist-sample.json");
+  fs.writeFileSync(samplePath, JSON.stringify(playlist, null, 2));
+  console.log("wrote", samplePath);
+
+  for (const item of playlist.items || []) {
+    try {
+      const local = await api.cacheAsset(creds.deviceToken, item);
+      console.log(`cached ${item.creativeName} → ${local}`);
+    } catch (e) {
+      console.warn(`cache fail ${item.creativeId}: ${e.message}`);
+    }
+  }
+
+  savePlaylistCache({ ...playlist, cachedAt: new Date().toISOString() });
+
+  const logs = await api.postPlayLogs(creds.deviceToken, [
+    {
+      creativeId: playlist.items?.[0]?.creativeId,
+      playedAt: new Date().toISOString(),
+      stub: true,
+    },
+  ]);
+  console.log("play-logs", logs);
+  console.log("OK");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
