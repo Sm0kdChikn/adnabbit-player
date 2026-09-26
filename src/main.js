@@ -11,6 +11,8 @@ const {
   saveApiBase,
   loadSavedApiBase,
   DEFAULT_API_BASE,
+  loadKioskPreference,
+  saveKioskPreference,
 } = require("./config");
 const api = require("./api");
 
@@ -19,9 +21,17 @@ const PLAYLIST_MS = 30_000;
 /** Ticket P.1 — drain remote-control queue. */
 const INPUT_POLL_MS = 2_000;
 
-/** ADNNABIT_KIOSK=0 always wins at start → windowed/debug. Anything else → kiosk. */
+/**
+ * Start-up kiosk decision:
+ * - ADNNABIT_KIOSK=0 always wins → windowed/debug
+ * - else ~/.adnabbit-player/preferences.json kiosk flag if set (Ticket P.1.1)
+ * - else default locked (kiosk on)
+ */
 function wantKioskAtStart() {
-  return process.env.ADNNABIT_KIOSK !== "0";
+  if (process.env.ADNNABIT_KIOSK === "0") return false;
+  const pref = loadKioskPreference();
+  if (pref !== null) return pref;
+  return true;
 }
 
 let mainWindow = null;
@@ -52,16 +62,53 @@ function applyKioskChrome(win, enabled) {
   }
 }
 
-function exitKioskChromeOnly() {
-  if (!kioskActive || !mainWindow || mainWindow.isDestroyed()) return;
-  kioskActive = false;
-  applyKioskChrome(mainWindow, false);
-  // Tell renderer settings affordance can show
-  mainWindow.webContents.send("player:kiosk-changed", { kiosk: false });
+/**
+ * Ticket P.1.1 — enable/disable Electron kiosk chrome at runtime.
+ * When unlocked: windowed, not always-on-top, Escape/shortcuts allowed.
+ * When locked: restore kiosk + fullscreen. Persists to preferences.json.
+ */
+function setKioskMode(enabled, { persist = true, reason = "" } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn("setKioskMode skipped — no BrowserWindow");
+    return;
+  }
+  if (setupMode) {
+    console.log("setKioskMode ignored during setup");
+    return;
+  }
+  const next = !!enabled;
+  if (kioskActive === next) {
+    if (persist) saveKioskPreference(next);
+    console.log(
+      `Kiosk already ${next ? "locked" : "unlocked"}${reason ? ` (${reason})` : ""}`
+    );
+    return;
+  }
+  kioskActive = next;
+  applyKioskChrome(mainWindow, next);
+  if (!next) {
+    // Ensure a usable windowed size when leaving fullscreen/kiosk
+    try {
+      mainWindow.setSize(1280, 720);
+      mainWindow.center();
+    } catch {
+      /* ignore */
+    }
+  }
+  if (persist) saveKioskPreference(next);
+  mainWindow.webContents.send("player:kiosk-changed", { kiosk: next });
   console.log(
-    "Kiosk chrome exited (Ctrl+Shift+Alt+Q). Windowed/debug mode — app still running (not an OS logout)."
+    `Kiosk ${next ? "locked" : "unlocked"}${reason ? ` (${reason})` : ""}. ` +
+      (next
+        ? "Fullscreen lockdown restored."
+        : "Windowed — use desktop around the player; app still running.")
   );
 }
+
+function exitKioskChromeOnly() {
+  setKioskMode(false, { reason: "Ctrl+Shift+Alt+Q / exitKiosk" });
+}
+
 
 function isBlockedShortcut(input) {
   if (input.type !== "keyDown") return false;
@@ -310,9 +357,16 @@ function applyRemoteInputEvents(events) {
     try {
       if (!ev || typeof ev !== "object") continue;
       if (ev.type === "command") {
-        if (ev.name === "exitKiosk") {
-          console.log("remote command: exitKiosk");
-          exitKioskChromeOnly();
+        if (ev.name === "exitKiosk" || ev.name === "disableKiosk") {
+          console.log(`remote command: ${ev.name}`);
+          setKioskMode(false, { reason: ev.name });
+        } else if (ev.name === "enableKiosk") {
+          console.log("remote command: enableKiosk");
+          setKioskMode(true, { reason: "enableKiosk" });
+        } else if (ev.name === "setKiosk") {
+          const on = !!ev.enabled;
+          console.log(`remote command: setKiosk enabled=${on}`);
+          setKioskMode(on, { reason: "setKiosk" });
         } else {
           console.log("remote command ignored:", ev.name);
         }

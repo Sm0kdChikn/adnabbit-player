@@ -24,6 +24,7 @@ const dataDir = resolveDataDir();
 const tokenPath = path.join(dataDir, "device-token.json");
 const apiBasePath = path.join(dataDir, "api-base.json");
 const playlistCachePath = path.join(dataDir, "playlist-cache.json");
+const prefsPath = path.join(dataDir, "preferences.json");
 const assetCacheDir = ensureDir(path.join(dataDir, "assets"));
 
 function loadSavedApiBase() {
@@ -101,6 +102,40 @@ function savePlaylistCache(playlist) {
   fs.writeFileSync(playlistCachePath, JSON.stringify(playlist, null, 2));
 }
 
+/**
+ * Ticket P.1.1 — persisted kiosk preference (null = no preference / default on).
+ * ADNNABIT_KIOSK=0 at process start still wins over this file.
+ */
+function loadKioskPreference() {
+  if (!fs.existsSync(prefsPath)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(prefsPath, "utf8"));
+    if (typeof data?.kiosk === "boolean") return data.kiosk;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveKioskPreference(kiosk) {
+  ensureDir(dataDir);
+  let existing = {};
+  if (fs.existsSync(prefsPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(prefsPath, "utf8")) || {};
+    } catch {
+      existing = {};
+    }
+  }
+  if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
+    existing = {};
+  }
+  existing.kiosk = !!kiosk;
+  existing.updatedAt = new Date().toISOString();
+  fs.writeFileSync(prefsPath, JSON.stringify(existing, null, 2));
+  return existing.kiosk;
+}
+
 module.exports = {
   dataDir,
   tokenPath,
@@ -117,4 +152,7 @@ module.exports = {
   hasValidToken,
   loadPlaylistCache,
   savePlaylistCache,
+  prefsPath,
+  loadKioskPreference,
+  saveKioskPreference,
 };

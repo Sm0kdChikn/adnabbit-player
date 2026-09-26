@@ -118,9 +118,19 @@ When the admin clicks **View screen**, the API bumps `screenshotEpoch`. Heartbea
 
 Headless smoke agent: if the command is present, logs and **skips** capture (no BrowserWindow).
 
-## Remote control (Ticket P.1)
+## Remote control (Ticket P.1) + kiosk toggle (P.1.1)
 
-Admin queues mouse/keyboard events on the web API. The player polls `POST /api/device/input` every ~2s (and when heartbeat reports `commands.inputPending`), then applies events with Electron `webContents.sendInputEvent` to the kiosk window. Named command `exitKiosk` calls the existing chrome exit path.
+Admin queues mouse/keyboard events on the web API. The player polls `POST /api/device/input` every ~2s (and when heartbeat reports `commands.inputPending`), then applies events with Electron `webContents.sendInputEvent` to the kiosk window.
+
+Named commands:
+
+| Command | Effect |
+|---------|--------|
+| `setKiosk` + `enabled: true/false` | Lock / unlock Electron kiosk chrome |
+| `enableKiosk` / `disableKiosk` | Same as setKiosk true / false |
+| `exitKiosk` | Alias for unlock (kept for P.1 compatibility) |
+
+Unlock → windowed (not always-on-top) so you can use the desktop around the player; lock → restore kiosk + fullscreen. Preference saved to `~/.adnabbit-player/preferences.json`. `ADNNABIT_KIOSK=0` still wins at start.
 
 Headless smoke agent drains and **logs** events (cannot apply without BrowserWindow).
 
@@ -142,7 +152,7 @@ ADNNABIT_KIOSK=0 npm start     # windowed/debug escape
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ADNNABIT_API_BASE` / `ADNABBIT_API_BASE` | saved file → `http://127.0.0.1:3000` | Web API origin (env wins over `~/.adnabbit-player/api-base.json`) |
-| `ADNNABIT_KIOSK` | on (unset) | Set `0` at start for windowed/debug — **always wins** |
+| `ADNNABIT_KIOSK` | on (unset) | Set `0` at start for windowed/debug — **always wins** over `preferences.json` |
 | `ADNNABIT_ALWAYS_ON_TOP` | on in kiosk | Set `0` to allow other windows above |
 | `ADNNABIT_FULLSCREEN` | unset | Legacy; kiosk already fullscreen |
 
