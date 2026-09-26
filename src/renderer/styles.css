@@ -76,3 +76,28 @@ html, body {
 #video.playing, #image.playing { display: block; }
 
 body.cursor-hidden, body.cursor-hidden * { cursor: none !important; }
+
+/* Ticket Q — soft blackout (black + idle; hard display-off TODO) */
+#blackout {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  position: absolute;
+  inset: 0;
+  background: #000;
+  z-index: 10;
+}
+body.blackout #chrome {
+  opacity: 0.35;
+}
+body.blackout #idle { display: none !important; }
+.blackout-title {
+  font-size: 22px;
+  color: #64748b;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}

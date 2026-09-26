@@ -23,6 +23,11 @@ async function main() {
 
   const hb = await api.heartbeat(creds.deviceToken);
   console.log("heartbeat", hb);
+  if (hb?.hours) {
+    console.log(
+      `Ticket Q hours: isOpenNow=${hb.hours.isOpenNow} reason=${hb.hours.reason} tz=${hb.hours.timezone}`
+    );
+  }
   if (typeof hb?.playlistEpoch === "number") {
     console.log(`playlistEpoch: ${hb.playlistEpoch}`);
   }
@@ -59,6 +64,11 @@ async function main() {
 
   const playlist = await api.getPlaylist(creds.deviceToken);
   console.log(`playlist items: ${playlist.items?.length || 0}`);
+  if (playlist.hours) {
+    console.log(
+      `Ticket Q playlist hours: isOpenNow=${playlist.hours.isOpenNow} alwaysOpen=${playlist.hours.alwaysOpen}`
+    );
+  }
   if (typeof playlist.playlistEpoch === "number") {
     console.log(`playlistEpoch: ${playlist.playlistEpoch}`);
   }

@@ -36,8 +36,12 @@ async function claim(code) {
   });
 }
 
-async function heartbeat(token) {
-  return apiFetch("/api/device/heartbeat", { method: "POST", token });
+async function heartbeat(token, body) {
+  return apiFetch("/api/device/heartbeat", {
+    method: "POST",
+    token,
+    body: body || {},
+  });
 }
 
 async function getPlaylist(token) {

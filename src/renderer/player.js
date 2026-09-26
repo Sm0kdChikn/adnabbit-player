@@ -3,14 +3,23 @@
   const image = document.getElementById("image");
   const idle = document.getElementById("idle");
   const idleDetail = document.getElementById("idle-detail");
+  const idleTitle = document.querySelector("#idle .idle-title");
   const statusEl = document.getElementById("status");
   const screenLabel = document.getElementById("screen-label");
   const clearBtn = document.getElementById("clear-pairing");
+  const blackoutEl = document.getElementById("blackout");
+  const blackoutDetail = document.getElementById("blackout-detail");
 
   let queue = [];
   let index = 0;
   let imageTimer = null;
   let playing = false;
+  /** Ticket Q — cached hours from playlist/heartbeat */
+  let hours = null;
+  let blackout = false;
+  let hoursTimer = null;
+  /** LIVE | BLACKOUT | IDLE | EMPTY */
+  let playbackState = "IDLE";
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -19,6 +28,11 @@
   function setClearVisible(show) {
     if (!clearBtn) return;
     clearBtn.hidden = !show;
+  }
+
+  function reportPlaybackState(state) {
+    playbackState = state;
+    window.adnabbit?.setPlaybackState?.(state);
   }
 
   function activeNow(items) {
@@ -30,19 +44,125 @@
     });
   }
 
-  function showIdle(msg) {
+  function parseHHMM(value) {
+    if (!value || typeof value !== "string") return null;
+    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+    if (!m) return null;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+
+  function zonedParts(date, timeZone) {
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      weekday: "short",
+    });
+    const parts = fmt.formatToParts(date);
+    const get = (type) => parts.find((p) => p.type === type)?.value || "";
+    const map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+    return {
+      minutes: Number(get("hour")) * 60 + Number(get("minute")),
+      isoWeekday: map[get("weekday")] || 1,
+    };
+  }
+
+  /** Ticket Q — local open-hours check (works offline with cached payload). */
+  function isOpenNow() {
+    if (!hours || hours.alwaysOpen) return true;
+    const forceUntil = hours.forceLiveUntil
+      ? Date.parse(hours.forceLiveUntil)
+      : NaN;
+    if (Number.isFinite(forceUntil) && forceUntil > Date.now()) return true;
+    const tz = hours.timezone || "America/Denver";
+    const weekly = Array.isArray(hours.weekly) ? hours.weekly : [];
+    if (!weekly.length) return true;
+    const parts = zonedParts(new Date(), tz);
+    const row = weekly.find((r) => r.weekday === parts.isoWeekday);
+    if (!row || !row.openTime || !row.closeTime) return false;
+    const openMin = parseHHMM(row.openTime);
+    const closeMin = parseHHMM(row.closeTime);
+    if (openMin === null || closeMin === null || closeMin <= openMin) return false;
+    return parts.minutes >= openMin && parts.minutes < closeMin;
+  }
+
+  function stopMedia() {
     playing = false;
+    if (imageTimer) {
+      clearTimeout(imageTimer);
+      imageTimer = null;
+    }
     video.pause();
     video.removeAttribute("src");
     video.load();
     video.classList.remove("playing");
     image.classList.remove("playing");
     image.removeAttribute("src");
+  }
+
+  function showBlackout(detail) {
+    blackout = true;
+    stopMedia();
+    idle.style.display = "none";
+    if (blackoutEl) {
+      blackoutEl.hidden = false;
+      blackoutEl.style.display = "flex";
+    }
+    if (blackoutDetail && detail) blackoutDetail.textContent = detail;
+    document.body.classList.add("blackout");
+    setStatus("Closed hours · soft blackout");
+    reportPlaybackState("BLACKOUT");
+  }
+
+  function hideBlackout() {
+    blackout = false;
+    if (blackoutEl) {
+      blackoutEl.hidden = true;
+      blackoutEl.style.display = "none";
+    }
+    document.body.classList.remove("blackout");
+  }
+
+  function showIdle(msg) {
+    playing = false;
+    stopMedia();
+    hideBlackout();
     idle.style.display = "block";
+    if (idleTitle) idleTitle.textContent = "Waiting for playlist";
     if (msg) idleDetail.textContent = msg;
   }
 
+  function formatNextWindow() {
+    if (!hours) return "";
+    if (hours.nextOpenAt) {
+      try {
+        return `Next open ${new Date(hours.nextOpenAt).toLocaleString()}`;
+      } catch {
+        return "";
+      }
+    }
+    return hours.reason === "closed_day" ? "Closed today" : "Outside open hours";
+  }
+
+  function checkHoursAndPlay() {
+    if (!isOpenNow()) {
+      showBlackout(formatNextWindow());
+      return;
+    }
+    if (blackout) hideBlackout();
+    playNext();
+  }
+
   function playNext() {
+    if (!isOpenNow()) {
+      showBlackout(formatNextWindow());
+      return;
+    }
+    hideBlackout();
     if (imageTimer) {
       clearTimeout(imageTimer);
       imageTimer = null;
@@ -50,21 +170,20 @@
     const active = activeNow(queue);
     if (!active.length) {
       showIdle("No creatives in the current window — waiting for next daypart.");
-      setStatus("Idle");
-      // Retry soon in case window rolls forward
-      setTimeout(playNext, 5000);
+      setStatus("Idle · empty window");
+      reportPlaybackState("EMPTY");
+      setTimeout(checkHoursAndPlay, 5000);
       return;
     }
-    // Loop within active set
+    idle.style.display = "none";
     if (index >= active.length) index = 0;
     const item = active[index % active.length];
     index += 1;
     const src = item.localUrl || item.assetUrl;
     if (!src) {
-      setTimeout(playNext, 500);
+      setTimeout(checkHoursAndPlay, 500);
       return;
     }
-    idle.style.display = "none";
     playing = true;
     const isVideo = (item.mimeType || "").startsWith("video/");
     if (isVideo) {
@@ -72,14 +191,18 @@
       video.classList.add("playing");
       video.src = src;
       video.muted = true;
-      video.play().catch(() => setTimeout(playNext, 1000));
+      video.play().catch(() => setTimeout(checkHoursAndPlay, 1000));
       setStatus(`Playing ${item.creativeName}`);
-      window.adnabbit?.playLog?.({
-        creativeId: item.creativeId,
-        scheduleId: item.scheduleId,
-        playedAt: new Date().toISOString(),
-        mimeType: item.mimeType,
-      });
+      reportPlaybackState("LIVE");
+      // Ticket Q — mute PoP outside hours (guard again at emit time)
+      if (isOpenNow()) {
+        window.adnabbit?.playLog?.({
+          creativeId: item.creativeId,
+          scheduleId: item.scheduleId,
+          playedAt: new Date().toISOString(),
+          mimeType: item.mimeType,
+        });
+      }
     } else {
       video.classList.remove("playing");
       video.pause();
@@ -87,25 +210,33 @@
       image.src = src;
       const dwell = (item.durationHintSec || 10) * 1000;
       setStatus(`Showing ${item.creativeName} (${dwell / 1000}s)`);
-      window.adnabbit?.playLog?.({
-        creativeId: item.creativeId,
-        scheduleId: item.scheduleId,
-        playedAt: new Date().toISOString(),
-        mimeType: item.mimeType,
-      });
-      imageTimer = setTimeout(playNext, dwell);
+      reportPlaybackState("LIVE");
+      if (isOpenNow()) {
+        window.adnabbit?.playLog?.({
+          creativeId: item.creativeId,
+          scheduleId: item.scheduleId,
+          playedAt: new Date().toISOString(),
+          mimeType: item.mimeType,
+        });
+      }
+      imageTimer = setTimeout(checkHoursAndPlay, dwell);
     }
   }
 
-  video.addEventListener("ended", playNext);
-  video.addEventListener("error", () => setTimeout(playNext, 1000));
+  video.addEventListener("ended", () => checkHoursAndPlay());
+  video.addEventListener("error", () => setTimeout(checkHoursAndPlay, 1000));
+
+  function applyHours(h) {
+    if (h && typeof h === "object") hours = h;
+  }
 
   function applyPlaylist(pl) {
     queue = pl?.items || [];
+    if (pl?.hours) applyHours(pl.hours);
     const label = [pl?.hostName, pl?.screenName].filter(Boolean).join(" · ");
     if (label) screenLabel.textContent = label + (pl.offline ? " (offline)" : "");
     index = 0;
-    playNext();
+    checkHoursAndPlay();
   }
 
   clearBtn?.addEventListener("click", async () => {
@@ -130,37 +261,43 @@
     if (!boot.claimed) {
       showIdle("Not claimed. Use the setup screen or: npm run claim -- --code XXXXXX");
       setStatus("Unclaimed");
+      reportPlaybackState("IDLE");
     } else {
       screenLabel.textContent = [boot.hostName, boot.screenName]
         .filter(Boolean)
         .join(" · ");
+      if (boot.playlist?.hours) applyHours(boot.playlist.hours);
+      if (boot.hours) applyHours(boot.hours);
       if (boot.playlist) applyPlaylist(boot.playlist);
       else showIdle("Fetching playlist…");
     }
     window.adnabbit.onPlaylist(applyPlaylist);
+    window.adnabbit.onHours?.((h) => {
+      applyHours(h);
+      checkHoursAndPlay();
+    });
     window.adnabbit.onStatus((s) => {
       if (s.error) setStatus(`Error: ${s.error}`);
+      else if (blackout) setStatus("Closed hours · soft blackout");
       else if (s.offline) setStatus(`Offline · ${s.itemCount || 0} cached`);
       else setStatus(`Online · ${s.itemCount || 0} items`);
     });
     window.adnabbit.onKioskChanged?.((s) => {
       setClearVisible(!s.kiosk);
     });
+    // Ticket Q — re-check schedule every minute
+    if (hoursTimer) clearInterval(hoursTimer);
+    hoursTimer = setInterval(() => {
+      checkHoursAndPlay();
+    }, 60_000);
   }
 
-  // Hide cursor after idle while playing; show on move (soft miss OK on some Linux WMs)
-  const CURSOR_IDLE_MS = 3000;
-  let cursorTimer = null;
-  function showCursor() {
-    document.body.classList.remove("cursor-hidden");
-    if (cursorTimer) clearTimeout(cursorTimer);
-    cursorTimer = setTimeout(() => {
-      if (playing) document.body.classList.add("cursor-hidden");
-    }, CURSOR_IDLE_MS);
-  }
-  document.addEventListener("mousemove", showCursor, { passive: true });
-  document.addEventListener("mousedown", showCursor, { passive: true });
-  showCursor();
+  // Expose for main-process queries via preload if needed
+  window.__adnabbitPlaybackState = () => playbackState;
 
-  boot();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 })();

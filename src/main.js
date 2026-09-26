@@ -17,6 +17,7 @@ const {
   saveKioskPreference,
 } = require("./config");
 const api = require("./api");
+const { evaluateHours } = require("./open-hours");
 
 const HEARTBEAT_MS = 60_000;
 const PLAYLIST_MS = 30_000;
@@ -46,6 +47,10 @@ let kioskActive = wantKioskAtStart();
 let setupMode = false;
 /** Ticket O — last playlistEpoch seen from API (heartbeat / playlist). */
 let lastPlaylistEpoch = 0;
+/** Ticket Q — last renderer-reported playback state for heartbeat body. */
+let lastPlaybackState = "IDLE";
+/** Ticket Q — cached open-hours from playlist/heartbeat (PoP mute guard). */
+let lastHours = null;
 /** Ticket P.1.3 — branded splash until setup/playback window is ready. */
 let splashWindow = null;
 /** Ticket P.1.2 — prevent double-scheduling reboot/restart. */
@@ -432,6 +437,10 @@ async function refreshPlaylist() {
       }
     }
     const enriched = { ...playlist, items, cachedAt: new Date().toISOString() };
+    if (playlist.hours) {
+      lastHours = playlist.hours;
+      mainWindow?.webContents.send("player:hours", playlist.hours);
+    }
     savePlaylistCache(enriched);
     mainWindow?.webContents.send("player:playlist", enriched);
     mainWindow?.webContents.send("player:status", {
@@ -610,7 +619,14 @@ async function doHeartbeat() {
   const creds = loadToken();
   if (!creds?.deviceToken) return;
   try {
-    const hb = await api.heartbeat(creds.deviceToken);
+    const hb = await api.heartbeat(creds.deviceToken, {
+      playbackState: lastPlaybackState,
+    });
+    // Ticket Q — refresh local hours cache from heartbeat
+    if (hb?.hours) {
+      lastHours = hb.hours;
+      mainWindow?.webContents.send("player:hours", hb.hours);
+    }
     // Ticket O — server bumped playlistEpoch → re-fetch immediately (poll interval unchanged)
     const epoch = hb?.playlistEpoch;
     if (typeof epoch === "number" && epoch > lastPlaylistEpoch) {
@@ -696,20 +712,36 @@ app.on("window-all-closed", () => {
 ipcMain.handle("player:get-bootstrap", () => {
   const creds = loadToken();
   const cached = loadPlaylistCache();
+  if (cached?.hours) lastHours = cached.hours;
   return {
     claimed: !!creds?.deviceToken,
     screenName: creds?.screenName || cached?.screenName || null,
     hostName: creds?.hostName || cached?.hostName || null,
     apiBase: getApiBase(),
     playlist: cached,
+    hours: lastHours || cached?.hours || null,
     kiosk: kioskActive,
     canClearPairing: !kioskActive || process.env.ADNNABIT_KIOSK === "0",
   };
 });
 
+ipcMain.handle("player:set-playback-state", (_e, state) => {
+  const s = String(state || "").toUpperCase();
+  if (["LIVE", "BLACKOUT", "IDLE", "EMPTY"].includes(s)) {
+    lastPlaybackState = s;
+  }
+  return { ok: true, playbackState: lastPlaybackState };
+});
+
 ipcMain.handle("player:play-log", async (_e, event) => {
   const creds = loadToken();
   if (!creds?.deviceToken) return { skipped: true };
+  // Ticket Q — never emit PoP while outside open hours (soft blackout)
+  const open = evaluateHours(lastHours);
+  if (!open.isOpen || lastPlaybackState === "BLACKOUT") {
+    console.log("play-log muted — closed hours / blackout");
+    return { skipped: true, reason: "blackout" };
+  }
   try {
     return await api.postPlayLogs(creds.deviceToken, [event]);
   } catch (err) {

@@ -17,7 +17,16 @@ contextBridge.exposeInMainWorld("adnabbit", {
     ipcRenderer.on("player:kiosk-changed", handler);
     return () => ipcRenderer.removeListener("player:kiosk-changed", handler);
   },
+  /** Ticket Q — open-hours payload pushed from heartbeat */
+  onHours: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on("player:hours", handler);
+    return () => ipcRenderer.removeListener("player:hours", handler);
+  },
   playLog: (event) => ipcRenderer.invoke("player:play-log", event),
+  /** Ticket Q — report LIVE | BLACKOUT | IDLE | EMPTY for admin status */
+  setPlaybackState: (state) =>
+    ipcRenderer.invoke("player:set-playback-state", state),
 
   // Setup / pairing IPC (Ticket N)
   getSetupState: () => ipcRenderer.invoke("setup:get-state"),

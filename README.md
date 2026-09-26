@@ -255,3 +255,13 @@ Ticket **P.1.3** covers dedicated user + DM autologin + XDG AppImage autostart. 
 ## Out of scope
 
 Fleet management, custom ISO / Plymouth theme, F2 play-log persistence, OptiSigns cutover, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc).
+
+## Ticket Q — Soft blackout / PoP mute
+
+Playlist, heartbeat, and claim responses include an `hours` object (`timezone`, `weekly`, `isOpenNow`, `forceLiveUntil`, `nextOpenAt` / `nextCloseAt`). The renderer re-checks every **60s** and on each playlist tick:
+
+- **Outside hours** → black stage (`#blackout`), media stopped, `playbackState: BLACKOUT` on heartbeat.
+- **PoP** (`player:play-log`) is skipped in main when closed / blackout.
+- Hours are cached with the playlist so a briefly offline player still enforces blackout.
+
+Hard display-off (CEC/DPMS) is not implemented.
