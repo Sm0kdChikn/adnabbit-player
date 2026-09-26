@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AdNabbit Player
+Comment=AdNabbit Linux kiosk player
+Exec=env ADNNABIT_KIOSK=1 npm --prefix @ROOT@ start
+Path=@ROOT@
+Icon=video-display
+Terminal=false
+Categories=AudioVideo;Player;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

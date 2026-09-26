@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu } = require("electron");
 const path = require("path");
 const {
   loadToken,
@@ -11,28 +11,131 @@ const api = require("./api");
 const HEARTBEAT_MS = 60_000;
 const PLAYLIST_MS = 30_000;
 
+/** ADNNABIT_KIOSK=0 always wins at start → windowed/debug. Anything else → kiosk. */
+function wantKioskAtStart() {
+  return process.env.ADNNABIT_KIOSK !== "0";
+}
+
 let mainWindow = null;
 let heartbeatTimer = null;
 let playlistTimer = null;
+/** Runtime flag: may drop to false after Ctrl+Shift+Alt+Q (kiosk chrome only). */
+let kioskActive = wantKioskAtStart();
+
+function applyKioskChrome(win, enabled) {
+  if (!win || win.isDestroyed()) return;
+  win.setMenuBarVisibility(false);
+  win.setAutoHideMenuBar(true);
+  if (enabled) {
+    win.setAlwaysOnTop(process.env.ADNNABIT_ALWAYS_ON_TOP !== "0");
+    win.setKiosk(true);
+    win.setFullScreen(true);
+  } else {
+    win.setAlwaysOnTop(false);
+    win.setKiosk(false);
+    win.setFullScreen(false);
+    win.setSize(1280, 720);
+    win.center();
+  }
+}
+
+function exitKioskChromeOnly() {
+  if (!kioskActive || !mainWindow || mainWindow.isDestroyed()) return;
+  kioskActive = false;
+  applyKioskChrome(mainWindow, false);
+  console.log(
+    "Kiosk chrome exited (Ctrl+Shift+Alt+Q). Windowed/debug mode — app still running (not an OS logout)."
+  );
+}
+
+function isBlockedShortcut(input) {
+  if (input.type !== "keyDown") return false;
+  const key = (input.key || "").toLowerCase();
+  const code = input.code || "";
+
+  // Escape hatch: leave Electron kiosk chrome only (does not quit app or touch OS)
+  if (
+    input.control &&
+    input.shift &&
+    input.alt &&
+    (key === "q" || code === "KeyQ")
+  ) {
+    exitKioskChromeOnly();
+    return true;
+  }
+
+  if (!kioskActive) return false;
+
+  // Close / quit style (Electron-level; OS may still honor Alt+F4 outside our control)
+  if (input.control && !input.alt && (key === "w" || code === "KeyW")) return true;
+  if (input.control && !input.alt && (key === "q" || code === "KeyQ")) return true;
+  if (input.alt && (key === "f4" || code === "F4")) return true;
+
+  // DevTools
+  if (key === "f12" || code === "F12") return true;
+  if (
+    input.control &&
+    input.shift &&
+    (key === "i" ||
+      key === "j" ||
+      key === "c" ||
+      code === "KeyI" ||
+      code === "KeyJ" ||
+      code === "KeyC")
+  ) {
+    return true;
+  }
+  if (input.control && (key === "u" || code === "KeyU")) return true;
+
+  // Reload
+  if (key === "f5" || code === "F5") return true;
+  if (input.control && (key === "r" || code === "KeyR")) return true;
+
+  return false;
+}
 
 function createWindow() {
+  const startKiosk = wantKioskAtStart();
+  kioskActive = startKiosk;
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
     backgroundColor: "#0B0F14",
+    frame: !startKiosk,
     autoHideMenuBar: true,
-    fullscreen: process.env.ADNNABIT_FULLSCREEN === "1",
+    fullscreen: startKiosk || process.env.ADNNABIT_FULLSCREEN === "1",
+    kiosk: startKiosk,
+    alwaysOnTop: startKiosk && process.env.ADNNABIT_ALWAYS_ON_TOP !== "0",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // DevTools off when starting in kiosk; allowed when ADNNABIT_KIOSK=0
+      devTools: !startKiosk,
     },
   });
+
+  Menu.setApplicationMenu(null);
+  mainWindow.setMenuBarVisibility(false);
+
+  mainWindow.webContents.on("context-menu", (e) => {
+    if (kioskActive) e.preventDefault();
+  });
+
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (isBlockedShortcut(input)) event.preventDefault();
+  });
+
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+
+  if (!startKiosk) {
+    console.log("ADNNABIT_KIOSK=0 — windowed/debug mode (DevTools allowed)");
+  }
 }
 
 async function refreshPlaylist() {
@@ -130,6 +233,7 @@ ipcMain.handle("player:get-bootstrap", () => {
     hostName: creds?.hostName || cached?.hostName || null,
     apiBase: getApiBase(),
     playlist: cached,
+    kiosk: kioskActive,
   };
 });
 

@@ -1,7 +1,7 @@
 {
   "name": "adnabbit-player",
   "version": "0.1.0",
-  "description": "AdNabbit Ticket J — software-first Linux kiosk player spike",
+  "description": "AdNabbit Ticket L \u2014 Linux Electron kiosk player (software install)",
   "private": true,
   "main": "src/main.js",
   "scripts": {

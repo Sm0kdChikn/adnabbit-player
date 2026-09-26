@@ -126,5 +126,20 @@
     });
   }
 
+
+  // Hide cursor after idle while playing; show on move (soft miss OK on some Linux WMs)
+  const CURSOR_IDLE_MS = 3000;
+  let cursorTimer = null;
+  function showCursor() {
+    document.body.classList.remove("cursor-hidden");
+    if (cursorTimer) clearTimeout(cursorTimer);
+    cursorTimer = setTimeout(() => {
+      if (playing) document.body.classList.add("cursor-hidden");
+    }, CURSOR_IDLE_MS);
+  }
+  document.addEventListener("mousemove", showCursor, { passive: true });
+  document.addEventListener("mousedown", showCursor, { passive: true });
+  showCursor();
+
   boot();
 })();

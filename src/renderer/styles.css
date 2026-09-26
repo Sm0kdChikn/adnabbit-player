@@ -52,3 +52,5 @@ html, body {
   background: #000;
 }
 #video.playing, #image.playing { display: block; }
+
+body.cursor-hidden, body.cursor-hidden * { cursor: none !important; }
