@@ -280,7 +280,13 @@
       if (s.error) setStatus(`Error: ${s.error}`);
       else if (blackout) setStatus("Closed hours · soft blackout");
       else if (s.offline) setStatus(`Offline · ${s.itemCount || 0} cached`);
-      else setStatus(`Online · ${s.itemCount || 0} items`);
+      else if (s.downloadAllowed === false) {
+        const def =
+          typeof s.downloadDeferredCount === "number" && s.downloadDeferredCount > 0
+            ? ` · deferred ${s.downloadDeferredCount}`
+            : "";
+        setStatus(`Online · quiet hours (cache only)${def} · ${s.itemCount || 0} items`);
+      } else setStatus(`Online · ${s.itemCount || 0} items`);
     });
     window.adnabbit.onKioskChanged?.((s) => {
       setClearVisible(!s.kiosk);

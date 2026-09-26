@@ -27,6 +27,9 @@ async function main() {
     })(),
   });
   console.log("heartbeat", hb);
+  if (typeof hb.downloadAllowed === "boolean") {
+    console.log(`Ticket U heartbeat downloadAllowed=${hb.downloadAllowed}`);
+  }
   if (hb?.hours) {
     console.log(
       `Ticket Q hours: isOpenNow=${hb.hours.isOpenNow} reason=${hb.hours.reason} tz=${hb.hours.timezone}`
@@ -81,13 +84,35 @@ async function main() {
   fs.writeFileSync(samplePath, JSON.stringify(playlist, null, 2));
   console.log("wrote", samplePath);
 
+  const downloadAllowed =
+    playlist.downloadAllowed !== false &&
+    playlist.downloadHours?.downloadAllowed !== false;
+  console.log(
+    `Ticket U downloadAllowed=${downloadAllowed} reason=${playlist.downloadHours?.reason || "n/a"}`
+  );
+  let deferred = 0;
   for (const item of playlist.items || []) {
     try {
+      const existing = api.resolveCachedAsset(item);
+      if (existing) {
+        console.log(`cache hit ${item.creativeName} → ${existing}`);
+        continue;
+      }
+      if (!downloadAllowed) {
+        deferred += 1;
+        console.log(
+          `download quiet hours — deferring ${item.creativeId} (${item.creativeName})`
+        );
+        continue;
+      }
       const local = await api.cacheAsset(creds.deviceToken, item);
       console.log(`cached ${item.creativeName} → ${local}`);
     } catch (e) {
       console.warn(`cache fail ${item.creativeId}: ${e.message}`);
     }
+  }
+  if (deferred > 0) {
+    console.log(`Ticket U deferred ${deferred} new download(s)`);
   }
 
   savePlaylistCache({ ...playlist, cachedAt: new Date().toISOString() });

@@ -56,7 +56,8 @@ async function postPlayLogs(token, events) {
   });
 }
 
-async function cacheAsset(token, item) {
+
+function assetDestPath(item) {
   const ext =
     item.mimeType === "video/mp4"
       ? ".mp4"
@@ -69,7 +70,20 @@ async function cacheAsset(token, item) {
             : item.mimeType === "image/webp"
               ? ".webp"
               : ".bin";
-  const dest = path.join(assetCacheDir, `${item.creativeId}${ext}`);
+  return path.join(assetCacheDir, `${item.creativeId}${ext}`);
+}
+
+/** Return local path if already cached; null otherwise (no network). */
+function resolveCachedAsset(item) {
+  const dest = assetDestPath(item);
+  if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+    return dest;
+  }
+  return null;
+}
+
+async function cacheAsset(token, item) {
+  const dest = assetDestPath(item);
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
     return dest;
   }
@@ -122,5 +136,6 @@ module.exports = {
   postScreenshot,
   pollInput,
   cacheAsset,
+  resolveCachedAsset,
   apiFetch,
 };

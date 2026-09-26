@@ -65,6 +65,25 @@ let lastPlaylistEpoch = 0;
 let lastPlaybackState = "IDLE";
 /** Ticket Q — cached open-hours from playlist/heartbeat (PoP mute guard). */
 let lastHours = null;
+/** Ticket U — download/quiet hours; null = legacy allow. */
+let lastDownloadHours = null;
+let lastDownloadAllowed = true;
+
+function applyDownloadHours(payload, explicitAllowed) {
+  if (payload && typeof payload === "object") {
+    lastDownloadHours = payload;
+    if (typeof payload.downloadAllowed === "boolean") {
+      lastDownloadAllowed = payload.downloadAllowed;
+    } else if (payload.alwaysAllow) {
+      lastDownloadAllowed = true;
+    }
+  }
+  if (typeof explicitAllowed === "boolean") {
+    lastDownloadAllowed = explicitAllowed;
+  }
+}
+
+
 /** Ticket P.1.3 — branded splash until setup/playback window is ready. */
 let splashWindow = null;
 /** Ticket P.1.2 — prevent double-scheduling reboot/restart. */
@@ -436,11 +455,35 @@ async function refreshPlaylist() {
     if (typeof playlist.playlistEpoch === "number") {
       lastPlaylistEpoch = Math.max(lastPlaylistEpoch, playlist.playlistEpoch);
     }
+    // Ticket U — honor downloadAllowed from playlist (empty = allow)
+    applyDownloadHours(playlist.downloadHours, playlist.downloadAllowed);
+    const downloadAllowed = lastDownloadAllowed !== false;
+
     // Cache assets locally and rewrite URLs to file://
+    // Outside download window: use existing cache only; defer new fetches.
     const items = [];
+    let deferredDownloads = 0;
+    let fetched = 0;
     for (const item of playlist.items || []) {
       try {
+        const existing = api.resolveCachedAsset(item);
+        if (existing) {
+          items.push({
+            ...item,
+            localUrl: `file://${existing}`,
+          });
+          continue;
+        }
+        if (!downloadAllowed) {
+          deferredDownloads += 1;
+          console.log(
+            `download quiet hours — deferring prefetch for ${item.creativeId} (${item.creativeName || "asset"})`
+          );
+          items.push({ ...item, localUrl: null, downloadDeferred: true });
+          continue;
+        }
         const localPath = await api.cacheAsset(creds.deviceToken, item);
+        fetched += 1;
         items.push({
           ...item,
           localUrl: `file://${localPath}`,
@@ -450,7 +493,18 @@ async function refreshPlaylist() {
         items.push({ ...item, localUrl: null });
       }
     }
-    const enriched = { ...playlist, items, cachedAt: new Date().toISOString() };
+    if (!downloadAllowed && deferredDownloads > 0) {
+      console.log(
+        `download quiet hours — skipped ${deferredDownloads} new asset fetch(es); playing cache only`
+      );
+    }
+    const enriched = {
+      ...playlist,
+      items,
+      cachedAt: new Date().toISOString(),
+      downloadAllowed,
+      downloadDeferredCount: deferredDownloads,
+    };
     if (playlist.hours) {
       lastHours = playlist.hours;
       mainWindow?.webContents.send("player:hours", playlist.hours);
@@ -463,6 +517,13 @@ async function refreshPlaylist() {
       hostName: playlist.hostName,
       itemCount: items.length,
       apiBase: getApiBase(),
+      downloadAllowed,
+      downloadDeferredCount: deferredDownloads,
+      assetsFetched: fetched,
+      warning:
+        !downloadAllowed && deferredDownloads > 0
+          ? `Quiet hours — deferred ${deferredDownloads} download(s)`
+          : undefined,
     });
   } catch (e) {
     console.warn("playlist poll failed, using cache", e.message);
@@ -643,6 +704,13 @@ async function doHeartbeat() {
       lastHours = hb.hours;
       mainWindow?.webContents.send("player:hours", hb.hours);
     }
+    // Ticket U — download / quiet hours
+    applyDownloadHours(hb?.downloadHours, hb?.downloadAllowed);
+    if (hb?.downloadAllowed === false) {
+      console.log(
+        `heartbeat downloadAllowed=false (${hb?.downloadHours?.reason || "quiet"})`
+      );
+    }
     // Ticket O — server bumped playlistEpoch → re-fetch immediately (poll interval unchanged)
     const epoch = hb?.playlistEpoch;
     if (typeof epoch === "number" && epoch > lastPlaylistEpoch) {
@@ -736,6 +804,8 @@ ipcMain.handle("player:get-bootstrap", () => {
     apiBase: getApiBase(),
     playlist: cached,
     hours: lastHours || cached?.hours || null,
+    downloadAllowed: lastDownloadAllowed,
+    downloadHours: lastDownloadHours || cached?.downloadHours || null,
     kiosk: kioskActive,
     canClearPairing: !kioskActive || process.env.ADNNABIT_KIOSK === "0",
   };

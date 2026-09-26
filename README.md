@@ -275,3 +275,10 @@ Heartbeat POST body may include:
 
 Admin fleet board uses these for version display; disk pressure only when values are present.
 
+## Ticket U — Download / quiet hours
+
+Heartbeat and playlist include `downloadAllowed` + `downloadHours` (host TZ weekly window; empty = allow anytime).
+
+- When `downloadAllowed` is false: playlist metadata still refreshes; **new** asset fetches are deferred. Existing cache hits still play.
+- Status / logs: `Quiet hours — deferred N download(s)` / `download quiet hours — deferring prefetch…`
+- Soft miss: force single fetch on hard cache miss (prefer defer + stale/empty).
