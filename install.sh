@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# AdNabbit player — Ubuntu/Debian install helper (Ticket L kiosk)
+# AdNabbit player — Ubuntu/Debian install helper
+# Preferred for mini-PC: download AppImage from GitHub Releases, or npm run dist.
 # Autostart is opt-in only: --autostart / --systemd (never forced).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -19,6 +20,11 @@ Usage: ./install.sh [options]
   --systemd          Install systemd --user unit template (opt-in; not enabled)
   --yes              Non-interactive (same as defaults + honor flags above)
   -h, --help         Show this help
+
+Packaged GUI (recommended on mini-PC):
+  npm run dist                 # AppImage + .deb → dist/
+  # or download AppImage from GitHub Releases
+  # First launch = setup GUI (API URL + claim code)
 USAGE
 }
 
@@ -101,7 +107,14 @@ elif [[ "$NONINTERACTIVE" -eq 0 ]] && [[ -t 0 ]]; then
 fi
 
 echo ""
-echo "Done. Pair then start (kiosk by default):"
+echo "Done."
+echo ""
+echo "Preferred (mini-PC GUI):"
+echo "  npm run dist                 # → dist/*.AppImage (and .deb if built)"
+echo "  # First launch shows setup: API URL + claim code"
+echo "  # Or download AppImage from GitHub Releases"
+echo ""
+echo "CLI fallback:"
 echo "  export ADNNABIT_API_BASE=http://127.0.0.1:3000"
 echo "  npm run claim -- --code XXXXXX"
 echo "  npm start"
@@ -109,9 +122,9 @@ echo ""
 echo "Escape hatch (windowed/debug):"
 echo "  ADNNABIT_KIOSK=0 npm start"
 echo "  # or while running: Ctrl+Shift+Alt+Q (exits kiosk chrome only)"
+echo "Clear pairing: rm ~/.adnabbit-player/device-token.json"
 echo ""
 echo "Opt-in autostart later:"
 echo "  ./install.sh --autostart"
 echo "  ./install.sh --systemd"
-echo "Templates: packaging/adnabbit-player.desktop , packaging/adnabbit-player.service"
-echo "See README.md for kiosk + OS soft-miss notes."
+echo "See README.md for mini-PC + packaging notes."

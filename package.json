@@ -1,19 +1,57 @@
 {
   "name": "adnabbit-player",
-  "version": "0.1.0",
-  "description": "AdNabbit Ticket L \u2014 Linux Electron kiosk player (software install)",
+  "version": "0.2.0",
+  "description": "AdNabbit Linux Electron kiosk player with first-run setup GUI",
   "private": true,
+  "author": "AdNabbit <ops@adnabbit.com>",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "claim": "node src/claim.js",
     "kiosk:headless": "node src/headless-agent.js",
+    "dist": "electron-builder --linux AppImage deb",
+    "dist:appimage": "electron-builder --linux AppImage",
+    "dist:dir": "electron-builder --linux dir",
     "postinstall": "node -e \"console.log('adnabbit-player ready')\""
   },
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
+  "devDependencies": {
+    "electron-builder": "^25.1.8",
     "electron": "^33.2.0"
+  },
+  "build": {
+    "appId": "com.adnabbit.player",
+    "productName": "AdNabbit Player",
+    "copyright": "Copyright © AdNabbit",
+    "directories": {
+      "output": "dist",
+      "buildResources": "packaging"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "src/main.js"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "executableName": "adnabbit-player",
+      "synopsis": "AdNabbit digital signage player",
+      "description": "Pairs to an AdNabbit screen, caches creatives, and plays in fullscreen kiosk mode.",
+      "maintainer": "AdNabbit <ops@adnabbit.com>"
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}.${ext}"
+    },
+    "deb": {
+      "artifactName": "${name}_${version}_${arch}.${ext}"
+    }
   }
 }

@@ -5,6 +5,7 @@
   const idleDetail = document.getElementById("idle-detail");
   const statusEl = document.getElementById("status");
   const screenLabel = document.getElementById("screen-label");
+  const clearBtn = document.getElementById("clear-pairing");
 
   let queue = [];
   let index = 0;
@@ -13,6 +14,11 @@
 
   function setStatus(text) {
     statusEl.textContent = text;
+  }
+
+  function setClearVisible(show) {
+    if (!clearBtn) return;
+    clearBtn.hidden = !show;
   }
 
   function activeNow(items) {
@@ -102,14 +108,27 @@
     playNext();
   }
 
+  clearBtn?.addEventListener("click", async () => {
+    if (!window.adnabbit?.clearPairing) return;
+    const ok = window.confirm(
+      "Clear pairing? You will need a new claim code. Token file ~/.adnabbit-player/device-token.json will be removed."
+    );
+    if (!ok) return;
+    const result = await window.adnabbit.clearPairing();
+    if (result?.error) {
+      setStatus(`Error: ${result.error}`);
+    }
+  });
+
   async function boot() {
     if (!window.adnabbit) {
       setStatus("Bridge missing");
       return;
     }
     const boot = await window.adnabbit.getBootstrap();
+    setClearVisible(!!boot.canClearPairing);
     if (!boot.claimed) {
-      showIdle("Not claimed. Run: npm run claim -- --code XXXXXX");
+      showIdle("Not claimed. Use the setup screen or: npm run claim -- --code XXXXXX");
       setStatus("Unclaimed");
     } else {
       screenLabel.textContent = [boot.hostName, boot.screenName]
@@ -124,8 +143,10 @@
       else if (s.offline) setStatus(`Offline · ${s.itemCount || 0} cached`);
       else setStatus(`Online · ${s.itemCount || 0} items`);
     });
+    window.adnabbit.onKioskChanged?.((s) => {
+      setClearVisible(!s.kiosk);
+    });
   }
-
 
   // Hide cursor after idle while playing; show on move (soft miss OK on some Linux WMs)
   const CURSOR_IDLE_MS = 3000;

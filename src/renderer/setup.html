@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>AdNabbit Player — Setup</title>
+    <link rel="stylesheet" href="setup.css" />
+  </head>
+  <body>
+    <main class="setup">
+      <header class="setup-header">
+        <div class="logo">AdNabbit</div>
+        <p class="tagline">Player setup</p>
+      </header>
+
+      <form id="setup-form" class="card" autocomplete="off">
+        <label class="field">
+          <span class="label">API base URL</span>
+          <input
+            id="api-base"
+            name="apiBase"
+            type="url"
+            inputmode="url"
+            placeholder="http://127.0.0.1:3000"
+            required
+          />
+          <span class="hint">AdNabbit web origin (no trailing slash needed)</span>
+        </label>
+
+        <label class="field">
+          <span class="label">Claim code</span>
+          <input
+            id="claim-code"
+            name="code"
+            type="text"
+            inputmode="numeric"
+            maxlength="6"
+            pattern="[0-9A-Za-z]{6}"
+            placeholder="••••••"
+            required
+            spellcheck="false"
+            autocomplete="one-time-code"
+          />
+          <span class="hint">6-digit code from admin / host portal</span>
+        </label>
+
+        <p id="error" class="error" hidden role="alert"></p>
+        <p id="success" class="success" hidden></p>
+
+        <button id="connect-btn" type="submit" class="primary">
+          Connect / Claim
+        </button>
+      </form>
+
+      <p class="footer muted">
+        Token &amp; API URL are stored under
+        <code>~/.adnabbit-player/</code>. CLI fallback:
+        <code>npm run claim -- --code XXXXXX</code>
+      </p>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>

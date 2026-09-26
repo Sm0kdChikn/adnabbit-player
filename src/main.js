@@ -2,9 +2,15 @@ const { app, BrowserWindow, ipcMain, Menu } = require("electron");
 const path = require("path");
 const {
   loadToken,
+  clearToken,
+  saveToken,
+  hasValidToken,
   loadPlaylistCache,
   savePlaylistCache,
   getApiBase,
+  saveApiBase,
+  loadSavedApiBase,
+  DEFAULT_API_BASE,
 } = require("./config");
 const api = require("./api");
 
@@ -21,6 +27,8 @@ let heartbeatTimer = null;
 let playlistTimer = null;
 /** Runtime flag: may drop to false after Ctrl+Shift+Alt+Q (kiosk chrome only). */
 let kioskActive = wantKioskAtStart();
+/** True while showing first-run setup (never kiosk). */
+let setupMode = false;
 
 function applyKioskChrome(win, enabled) {
   if (!win || win.isDestroyed()) return;
@@ -43,6 +51,8 @@ function exitKioskChromeOnly() {
   if (!kioskActive || !mainWindow || mainWindow.isDestroyed()) return;
   kioskActive = false;
   applyKioskChrome(mainWindow, false);
+  // Tell renderer settings affordance can show
+  mainWindow.webContents.send("player:kiosk-changed", { kiosk: false });
   console.log(
     "Kiosk chrome exited (Ctrl+Shift+Alt+Q). Windowed/debug mode — app still running (not an OS logout)."
   );
@@ -94,55 +104,115 @@ function isBlockedShortcut(input) {
   return false;
 }
 
-function createWindow() {
-  const startKiosk = wantKioskAtStart();
+function stopLoops() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (playlistTimer) {
+    clearInterval(playlistTimer);
+    playlistTimer = null;
+  }
+}
+
+function attachWindowGuards(win) {
+  win.webContents.on("context-menu", (e) => {
+    if (kioskActive) e.preventDefault();
+  });
+  win.webContents.on("before-input-event", (event, input) => {
+    if (isBlockedShortcut(input)) event.preventDefault();
+  });
+}
+
+function createWindow({ setup } = {}) {
+  setupMode = !!setup;
+  const startKiosk = !setupMode && wantKioskAtStart();
   kioskActive = startKiosk;
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 720,
+    width: setupMode ? 520 : 1280,
+    height: setupMode ? 640 : 720,
     backgroundColor: "#0B0F14",
-    frame: !startKiosk,
+    // Setup is always windowed/framed; player follows kiosk rules
+    frame: setupMode || !startKiosk,
     autoHideMenuBar: true,
-    fullscreen: startKiosk || process.env.ADNNABIT_FULLSCREEN === "1",
+    fullscreen: !setupMode && (startKiosk || process.env.ADNNABIT_FULLSCREEN === "1"),
     kiosk: startKiosk,
     alwaysOnTop: startKiosk && process.env.ADNNABIT_ALWAYS_ON_TOP !== "0",
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // DevTools off when starting in kiosk; allowed when ADNNABIT_KIOSK=0
-      devTools: !startKiosk,
+      // DevTools off when starting in kiosk; allowed for setup / ADNNABIT_KIOSK=0
+      devTools: setupMode || !startKiosk,
     },
   });
 
   Menu.setApplicationMenu(null);
   mainWindow.setMenuBarVisibility(false);
+  attachWindowGuards(mainWindow);
 
-  mainWindow.webContents.on("context-menu", (e) => {
-    if (kioskActive) e.preventDefault();
-  });
+  const page = setupMode
+    ? path.join(__dirname, "renderer", "setup.html")
+    : path.join(__dirname, "renderer", "index.html");
+  mainWindow.loadFile(page);
 
-  mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (isBlockedShortcut(input)) event.preventDefault();
-  });
-
-  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
 
-  if (!startKiosk) {
+  if (setupMode) {
+    console.log("Setup mode — enter API URL + claim code (windowed)");
+  } else if (!startKiosk) {
     console.log("ADNNABIT_KIOSK=0 — windowed/debug mode (DevTools allowed)");
   }
+}
+
+async function showPlayerAfterClaim() {
+  stopLoops();
+  setupMode = false;
+  const startKiosk = wantKioskAtStart();
+  kioskActive = startKiosk;
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow({ setup: false });
+    startLoops();
+    return;
+  }
+
+  // Cannot toggle `frame` after create — kiosk chrome covers setup's framed window
+  applyKioskChrome(mainWindow, startKiosk);
+  if (!startKiosk) {
+    mainWindow.setSize(1280, 720);
+    mainWindow.center();
+  }
+  await mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+  startLoops();
+}
+
+async function showSetupScreen() {
+  stopLoops();
+  setupMode = true;
+  kioskActive = false;
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow({ setup: true });
+    return;
+  }
+
+  applyKioskChrome(mainWindow, false);
+  mainWindow.setSize(520, 640);
+  mainWindow.center();
+  await mainWindow.loadFile(path.join(__dirname, "renderer", "setup.html"));
 }
 
 async function refreshPlaylist() {
   const creds = loadToken();
   if (!creds?.deviceToken) {
     mainWindow?.webContents.send("player:status", {
-      error: "Not claimed — run npm run claim -- --code XXXXXX",
+      error: "Not claimed — open setup or run npm run claim -- --code XXXXXX",
     });
     return;
   }
@@ -210,17 +280,48 @@ function startLoops() {
   heartbeatTimer = setInterval(doHeartbeat, HEARTBEAT_MS);
 }
 
+function friendlyClaimError(err) {
+  const status = err?.status;
+  const msg = (err?.message || "").toLowerCase();
+  if (
+    err?.cause?.code === "ECONNREFUSED" ||
+    err?.code === "ECONNREFUSED" ||
+    msg.includes("fetch failed") ||
+    msg.includes("econnrefused") ||
+    msg.includes("network")
+  ) {
+    return `Unreachable API at ${getApiBase()}. Check the URL and that AdNabbit web is running.`;
+  }
+  if (status === 400 || status === 404 || status === 410 || msg.includes("invalid") || msg.includes("expired") || msg.includes("code")) {
+    return err.message || "Invalid or expired claim code.";
+  }
+  if (status === 401 || status === 403) {
+    return err.message || "Claim rejected by API.";
+  }
+  return err?.message || "Claim failed";
+}
+
 app.whenReady().then(() => {
-  createWindow();
-  startLoops();
+  if (hasValidToken()) {
+    createWindow({ setup: false });
+    startLoops();
+  } else {
+    createWindow({ setup: true });
+  }
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      if (hasValidToken()) {
+        createWindow({ setup: false });
+        startLoops();
+      } else {
+        createWindow({ setup: true });
+      }
+    }
   });
 });
 
 app.on("window-all-closed", () => {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  if (playlistTimer) clearInterval(playlistTimer);
+  stopLoops();
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -234,6 +335,7 @@ ipcMain.handle("player:get-bootstrap", () => {
     apiBase: getApiBase(),
     playlist: cached,
     kiosk: kioskActive,
+    canClearPairing: !kioskActive || process.env.ADNNABIT_KIOSK === "0",
   };
 });
 
@@ -245,4 +347,98 @@ ipcMain.handle("player:play-log", async (_e, event) => {
   } catch (err) {
     return { error: err.message };
   }
+});
+
+ipcMain.handle("setup:get-state", () => {
+  const creds = loadToken();
+  return {
+    paired: hasValidToken(),
+    apiBase: getApiBase(),
+    savedApiBase: loadSavedApiBase(),
+    defaultApiBase: DEFAULT_API_BASE,
+    screenName: creds?.screenName || null,
+    hostName: creds?.hostName || null,
+    kiosk: kioskActive,
+  };
+});
+
+ipcMain.handle("setup:save-api-base", (_e, url) => {
+  try {
+    const saved = saveApiBase(url);
+    return { ok: true, apiBase: saved };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle("setup:claim", async (_e, payload = {}) => {
+  const codeRaw = String(payload.code || "").trim();
+  const apiBaseRaw = payload.apiBase != null ? String(payload.apiBase).trim() : null;
+
+  if (!codeRaw) {
+    return { error: "Enter the claim code." };
+  }
+
+  try {
+    if (apiBaseRaw) {
+      saveApiBase(apiBaseRaw);
+    }
+  } catch (err) {
+    return { error: err.message };
+  }
+
+  try {
+    console.log(`Claiming against ${getApiBase()} …`);
+    const result = await api.claim(codeRaw.toUpperCase());
+    const tokenPayload = {
+      deviceToken: result.deviceToken,
+      screenId: result.screenId,
+      screenName: result.screenName,
+      hostName: result.hostName,
+      timezone: result.timezone,
+      claimedAt: new Date().toISOString(),
+      apiBase: getApiBase(),
+    };
+    saveToken(tokenPayload);
+    // Transition after a short beat so setup UI can show success
+    setTimeout(() => {
+      showPlayerAfterClaim().catch((e) =>
+        console.error("transition to player failed", e)
+      );
+    }, 600);
+    return {
+      ok: true,
+      screenName: result.screenName,
+      hostName: result.hostName,
+      screenId: result.screenId,
+    };
+  } catch (err) {
+    console.warn("claim failed", err.message);
+    return { error: friendlyClaimError(err) };
+  }
+});
+
+ipcMain.handle("setup:get-status", () => {
+  const creds = loadToken();
+  return {
+    paired: hasValidToken(),
+    apiBase: getApiBase(),
+    screenName: creds?.screenName || null,
+    hostName: creds?.hostName || null,
+    kiosk: kioskActive,
+    setupMode,
+  };
+});
+
+ipcMain.handle("setup:clear-pairing", async () => {
+  // Allow clear when not in kiosk, or when explicitly windowed via env
+  if (kioskActive && process.env.ADNNABIT_KIOSK !== "0") {
+    return {
+      error:
+        "Exit kiosk first (Ctrl+Shift+Alt+Q) or start with ADNNABIT_KIOSK=0 to clear pairing.",
+    };
+  }
+  clearToken();
+  await showSetupScreen();
+  return { ok: true };
 });

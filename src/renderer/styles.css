@@ -4,6 +4,7 @@
   --cyan: #00e5ff;
   --text: #e8eef6;
   --muted: #94a3b8;
+  --border: #1e293b;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -33,6 +34,27 @@ html, body {
   text-shadow: 0 0 12px rgba(0, 229, 255, 0.35);
 }
 .muted { color: var(--muted); font-size: 13px; }
+.chrome-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+.ghost {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.ghost:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
 #stage {
   position: absolute;
   inset: 0;
