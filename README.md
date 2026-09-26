@@ -129,12 +129,73 @@ Named commands:
 | `setKiosk` + `enabled: true/false` | Lock / unlock Electron kiosk chrome |
 | `enableKiosk` / `disableKiosk` | Same as setKiosk true / false |
 | `exitKiosk` | Alias for unlock (kept for P.1 compatibility) |
+| `reboot` | Clean quit → `adnabbit-reboot` helper → `systemctl reboot` (Ticket P.1.2) |
+| `restartApp` | Relaunch Electron process only (no OS reboot) |
 
 Unlock → windowed (not always-on-top) so you can use the desktop around the player; lock → restore kiosk + fullscreen. Preference saved to `~/.adnabbit-player/preferences.json`. `ADNNABIT_KIOSK=0` still wins at start.
 
-Headless smoke agent drains and **logs** events (cannot apply without BrowserWindow).
+Headless smoke agent drains and **logs** events (cannot apply without BrowserWindow). Reboot/restartApp are dry-run logged in headless.
 
 For full **OS** remoting outside Electron, operators should still use **Tailscale + wayvnc** (ops path B).
+
+## Device reboot (Ticket P.1.2)
+
+Admin **Reboot device** (confirm dialog) queues `{ type: "command", name: "reboot" }`. The player:
+
+1. Stops heartbeat / playlist / input loops
+2. Schedules a clean Electron quit (~600ms)
+3. Spawns `sudo -n /usr/local/sbin/adnabbit-reboot` (or the helper path directly)
+4. Helper runs `systemctl reboot` (falls back to `reboot`)
+
+**Privilege:** the kiosk user must be allowed to run the helper without a password:
+
+| Path | File |
+|------|------|
+| Helper | `packaging/adnabbit-reboot` → `/usr/local/sbin/adnabbit-reboot` |
+| sudoers | `packaging/sudoers.d/adnabbit-reboot` → `/etc/sudoers.d/adnabbit-reboot` |
+| polkit (optional) | `packaging/polkit/10-adnabbit-reboot.rules` |
+
+Both are installed by `scripts/install-autostart.sh`. Without them the player logs an error and does **not** reboot.
+
+Smoke-safe dry run (no OS reboot):
+
+```bash
+ADNNABIT_REBOOT_DRY_RUN=1   # player logs + quits instead of invoking helper
+ADNNABIT_REBOOT_DRY_RUN=1 /usr/local/sbin/adnabbit-reboot   # helper itself no-ops
+```
+
+## Mini-PC autostart (Ticket P.1.3)
+
+Dedicated **kiosk user** + **display-manager autologin** + **XDG autostart** of the AppImage under `/opt/adnabbit/`. Linger alone is not enough for a graphical session.
+
+```bash
+# On a build machine:
+npm run dist:appimage
+
+# On the mini-PC (Ubuntu 24.04):
+sudo ./scripts/install-autostart.sh --appimage ./AdNabbit-Player-*.AppImage
+# options: --user adnabbit --opt /opt/adnabbit --yes
+```
+
+What the script does:
+
+1. Creates user `adnabbit` (if missing)
+2. Installs AppImage + logo to `/opt/adnabbit/`
+3. Writes XDG autostart (`~/.config/autostart/adnabbit-player.desktop`)
+4. Configures GDM or LightDM automatic login
+5. Enables `loginctl enable-linger` for the user
+6. Installs `adnabbit-reboot` + sudoers NOPASSWD (+ polkit)
+
+Boot flow: power-on → DM autologin as `adnabbit` → XDG starts AppImage → **Electron branded splash** (logo) → unpaired **setup/claim** GUI, or paired **kiosk playback** (P.1.1 preference persists).
+
+No Plymouth theme / custom ISO in this ticket.
+
+Dev-session opt-in (current user only, no dedicated account):
+
+```bash
+./install.sh --autostart   # ~/.config/autostart
+./install.sh --systemd     # user unit template
+```
 
 ## Smoke steps
 
@@ -155,13 +216,18 @@ ADNNABIT_KIOSK=0 npm start     # windowed/debug escape
 | `ADNNABIT_KIOSK` | on (unset) | Set `0` at start for windowed/debug — **always wins** over `preferences.json` |
 | `ADNNABIT_ALWAYS_ON_TOP` | on in kiosk | Set `0` to allow other windows above |
 | `ADNNABIT_FULLSCREEN` | unset | Legacy; kiosk already fullscreen |
+| `ADNNABIT_REBOOT_DRY_RUN` | unset | Set `1` to log reboot path without OS reboot (smoke) |
+| `ADNNABIT_REBOOT_HELPER` | auto | Override path to `adnabbit-reboot` helper |
 
-## Autostart (opt-in)
+## Autostart (opt-in for current user)
 
-Templates live in `packaging/`:
+For a **Lobby TV mini-PC**, prefer Ticket P.1.3 (`scripts/install-autostart.sh`) above.
+
+Dev / same-user templates in `packaging/`:
 
 - `adnabbit-player.desktop` — applications + autostart entry (`ADNNABIT_KIOSK=1`)
 - `adnabbit-player.service` — systemd **user** unit template
+- `adnabbit-player-appimage.desktop` — `/opt/adnabbit` AppImage entry used by P.1.3
 
 ```bash
 ./install.sh --autostart
@@ -179,12 +245,13 @@ systemctl --user enable --now adnabbit-player
 | `device-token.json` | Paired device token + screen metadata |
 | `api-base.json` | Persisted API origin from setup GUI / CLI |
 | `playlist-cache.json` | Last playlist (offline fallback) |
+| `preferences.json` | Kiosk lock preference (P.1.1) |
 | `assets/` | Cached creatives |
 
-## OS-level lockdown (soft miss / later)
+## OS-level lockdown
 
-Electron kiosk is **not** a full OS lockdown. For a dedicated Lobby TV box, operators may later use a guest/kiosk user, autologin, hide panel/dock, etc. Those steps are **out of scope** here.
+Ticket **P.1.3** covers dedicated user + DM autologin + XDG AppImage autostart. Electron kiosk (P.1.1) is still not a full desktop lockdown (panel/dock hide, etc. remain operator-optional).
 
 ## Out of scope
 
-Fleet management, custom ISO, F2 play-log persistence, OptiSigns cutover, forced OS lockdown, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc).
+Fleet management, custom ISO / Plymouth theme, F2 play-log persistence, OptiSigns cutover, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc).

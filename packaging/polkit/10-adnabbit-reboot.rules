@@ -1,0 +1,15 @@
+/* AdNabbit P.1.2 — allow dedicated kiosk user to reboot without interactive auth.
+ * Install: sudo install -m 644 packaging/polkit/10-adnabbit-reboot.rules \
+ *   /etc/polkit-1/rules.d/10-adnabbit-reboot.rules
+ * Prefer the sudoers helper path when possible; this covers direct systemctl reboot.
+ */
+polkit.addRule(function (action, subject) {
+  if (
+    (action.id === "org.freedesktop.login1.reboot" ||
+      action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+      action.id === "org.freedesktop.systemd1.manage-units") &&
+    subject.user === "adnabbit"
+  ) {
+    return polkit.Result.YES;
+  }
+});

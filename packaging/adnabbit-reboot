@@ -1,0 +1,27 @@
+#!/bin/sh
+# AdNabbit — privileged OS reboot helper (Ticket P.1.2)
+# Installed to /usr/local/sbin/adnabbit-reboot and invoked by the Electron
+# player after a remote `reboot` command (clean quit first).
+#
+# Privilege: either
+#   - sudoers NOPASSWD for the kiosk user on THIS path, or
+#   - polkit rule allowing org.freedesktop.login1.reboot for that user
+# See packaging/sudoers.d/adnabbit-reboot and packaging/polkit/10-adnabbit-reboot.rules.
+set -eu
+
+if [ "${ADNNABIT_REBOOT_DRY_RUN:-0}" = "1" ]; then
+  echo "adnabbit-reboot: DRY RUN — would systemctl reboot" >&2
+  exit 0
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  exec /usr/bin/systemctl reboot
+fi
+
+# Fallback when systemd is unavailable
+if command -v reboot >/dev/null 2>&1; then
+  exec reboot
+fi
+
+echo "adnabbit-reboot: neither systemctl nor reboot found" >&2
+exit 1

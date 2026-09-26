@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=AdNabbit Player
+Comment=AdNabbit Linux kiosk player
+Exec=env ADNNABIT_KIOSK=1 /opt/adnabbit/AdNabbit-Player.AppImage
+Path=/opt/adnabbit
+Icon=/opt/adnabbit/logo.jpg
+Terminal=false
+Categories=AudioVideo;Player;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Application

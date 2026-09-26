@@ -36,11 +36,23 @@ async function main() {
     console.log("inputPending signaled on heartbeat");
   }
 
-  // Ticket P.1 — drain remote-control queue (log only; no BrowserWindow to apply)
+  // Ticket P.1 / P.1.2 — drain remote-control queue (log only; no BrowserWindow)
   try {
     const input = await api.pollInput(creds.deviceToken);
-    const n = input?.events?.length || 0;
-    console.log(`input poll: ${n} event(s)`, n ? input.events : "");
+    const events = input?.events || [];
+    const n = events.length;
+    console.log(`input poll: ${n} event(s)`, n ? events : "");
+    for (const ev of events) {
+      if (ev?.type === "command" && ev.name === "reboot") {
+        console.log(
+          "[dry-run] reboot command received — would schedule clean quit + adnabbit-reboot helper (skipped in headless)"
+        );
+      } else if (ev?.type === "command" && ev.name === "restartApp") {
+        console.log(
+          "[dry-run] restartApp command received — would app.relaunch() (skipped in headless)"
+        );
+      }
+    }
   } catch (e) {
     console.warn("input poll failed", e.message);
   }

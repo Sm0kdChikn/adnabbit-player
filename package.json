@@ -1,6 +1,6 @@
 {
   "name": "adnabbit-player",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AdNabbit Linux Electron kiosk player with first-run setup GUI",
   "private": true,
   "author": "AdNabbit <ops@adnabbit.com>",
@@ -12,7 +12,9 @@
     "dist": "electron-builder --linux AppImage deb",
     "dist:appimage": "electron-builder --linux AppImage",
     "dist:dir": "electron-builder --linux dir",
-    "postinstall": "node -e \"console.log('adnabbit-player ready')\""
+    "postinstall": "node -e \"console.log('adnabbit-player ready')\"",
+    "install:kiosk": "echo \"Run as root: sudo ./scripts/install-autostart.sh --appimage <path>\"",
+    "check": "node --check src/main.js && node --check src/headless-agent.js && node --check src/api.js"
   },
   "engines": {
     "node": ">=18"
@@ -24,7 +26,7 @@
   "build": {
     "appId": "com.adnabbit.player",
     "productName": "AdNabbit Player",
-    "copyright": "Copyright © AdNabbit",
+    "copyright": "Copyright \u00a9 AdNabbit",
     "directories": {
       "output": "dist",
       "buildResources": "packaging"

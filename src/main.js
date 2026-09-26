@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, Menu } = require("electron");
 const path = require("path");
+const { spawn } = require("child_process");
+const fs = require("fs");
 const {
   loadToken,
   clearToken,
@@ -44,6 +46,137 @@ let kioskActive = wantKioskAtStart();
 let setupMode = false;
 /** Ticket O — last playlistEpoch seen from API (heartbeat / playlist). */
 let lastPlaylistEpoch = 0;
+/** Ticket P.1.3 — branded splash until setup/playback window is ready. */
+let splashWindow = null;
+/** Ticket P.1.2 — prevent double-scheduling reboot/restart. */
+let powerActionScheduled = false;
+
+const REBOOT_HELPER_CANDIDATES = [
+  process.env.ADNNABIT_REBOOT_HELPER,
+  "/usr/local/sbin/adnabbit-reboot",
+  "/usr/local/bin/adnabbit-reboot",
+  path.join(__dirname, "..", "packaging", "adnabbit-reboot"),
+].filter(Boolean);
+
+function resolveRebootHelper() {
+  for (const candidate of REBOOT_HELPER_CANDIDATES) {
+    try {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+function showSplash() {
+  if (splashWindow && !splashWindow.isDestroyed()) return;
+  splashWindow = new BrowserWindow({
+    width: 420,
+    height: 320,
+    frame: false,
+    resizable: false,
+    movable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#0B0F14",
+    show: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  splashWindow.setMenuBarVisibility(false);
+  splashWindow.loadFile(path.join(__dirname, "renderer", "splash.html"));
+  splashWindow.center();
+  splashWindow.on("closed", () => {
+    splashWindow = null;
+  });
+}
+
+function closeSplash() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try {
+      splashWindow.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  splashWindow = null;
+}
+
+/**
+ * Ticket P.1.2 — clean quit, then OS reboot via adnabbit-reboot helper.
+ * Set ADNNABIT_REBOOT_DRY_RUN=1 to log + quit without rebooting (smoke-safe).
+ */
+function scheduleDeviceReboot() {
+  if (powerActionScheduled) {
+    console.log("reboot already scheduled — ignoring duplicate");
+    return;
+  }
+  powerActionScheduled = true;
+  const dry = process.env.ADNNABIT_REBOOT_DRY_RUN === "1";
+  console.log(
+    `remote command: reboot — scheduling clean quit then OS reboot` +
+      (dry ? " (ADNNABIT_REBOOT_DRY_RUN=1)" : "")
+  );
+  stopLoops();
+  setTimeout(() => {
+    if (dry) {
+      console.log(
+        "[dry-run] would invoke adnabbit-reboot helper; quitting without reboot"
+      );
+      app.quit();
+      return;
+    }
+    const helper = resolveRebootHelper();
+    if (!helper) {
+      console.error(
+        "reboot aborted — adnabbit-reboot helper not found. " +
+          "Install via scripts/install-autostart.sh (sudoers/polkit required)."
+      );
+      powerActionScheduled = false;
+      return;
+    }
+    console.log(`invoking reboot helper: ${helper}`);
+    const useSudo = !helper.includes("packaging") && process.getuid?.() !== 0;
+    const cmd = useSudo ? "sudo" : helper;
+    const args = useSudo ? ["-n", helper] : [];
+    try {
+      const child = spawn(cmd, args, {
+        detached: true,
+        stdio: "ignore",
+        env: { ...process.env },
+      });
+      child.unref();
+    } catch (e) {
+      console.error("failed to spawn reboot helper:", e.message);
+      powerActionScheduled = false;
+      return;
+    }
+    // Give the helper a moment to start, then quit Electron
+    setTimeout(() => app.quit(), 400);
+  }, 600);
+}
+
+/** Ticket P.1.2 secondary — relaunch Electron process only (no OS reboot). */
+function scheduleAppRestart() {
+  if (powerActionScheduled) {
+    console.log("power action already scheduled — ignoring restartApp");
+    return;
+  }
+  powerActionScheduled = true;
+  console.log("remote command: restartApp — relaunching Electron process");
+  stopLoops();
+  setTimeout(() => {
+    app.relaunch();
+    app.quit();
+  }, 400);
+}
 
 function applyKioskChrome(win, enabled) {
   if (!win || win.isDestroyed()) return;
@@ -195,7 +328,8 @@ function createWindow({ setup } = {}) {
     fullscreen: !setupMode && (startKiosk || process.env.ADNNABIT_FULLSCREEN === "1"),
     kiosk: startKiosk,
     alwaysOnTop: startKiosk && process.env.ADNNABIT_ALWAYS_ON_TOP !== "0",
-    show: true,
+    // Hold until ready-to-show so splash covers cold start (P.1.3)
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -209,6 +343,12 @@ function createWindow({ setup } = {}) {
   Menu.setApplicationMenu(null);
   mainWindow.setMenuBarVisibility(false);
   attachWindowGuards(mainWindow);
+
+  mainWindow.once("ready-to-show", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.show();
+    closeSplash();
+  });
 
   const page = setupMode
     ? path.join(__dirname, "renderer", "setup.html")
@@ -367,6 +507,10 @@ function applyRemoteInputEvents(events) {
           const on = !!ev.enabled;
           console.log(`remote command: setKiosk enabled=${on}`);
           setKioskMode(on, { reason: "setKiosk" });
+        } else if (ev.name === "reboot") {
+          scheduleDeviceReboot();
+        } else if (ev.name === "restartApp") {
+          scheduleAppRestart();
         } else {
           console.log("remote command ignored:", ev.name);
         }
@@ -524,10 +668,12 @@ function friendlyClaimError(err) {
 }
 
 app.whenReady().then(() => {
+  showSplash();
   if (hasValidToken()) {
     createWindow({ setup: false });
     startLoops();
   } else {
+    // Unpaired → setup/claim GUI (P.1.3)
     createWindow({ setup: true });
   }
   app.on("activate", () => {

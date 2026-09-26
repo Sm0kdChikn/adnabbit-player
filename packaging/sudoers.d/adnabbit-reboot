@@ -1,0 +1,4 @@
+# AdNabbit P.1.2 — allow kiosk user to run the reboot helper without a password.
+# Install: sudo install -m 440 packaging/sudoers.d/adnabbit-reboot /etc/sudoers.d/adnabbit-reboot
+# Replace "adnabbit" if you use a different dedicated kiosk username.
+adnabbit ALL=(root) NOPASSWD: /usr/local/sbin/adnabbit-reboot

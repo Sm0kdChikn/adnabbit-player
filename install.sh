@@ -25,6 +25,10 @@ Packaged GUI (recommended on mini-PC):
   npm run dist                 # AppImage + .deb → dist/
   # or download AppImage from GitHub Releases
   # First launch = setup GUI (API URL + claim code)
+
+Kiosk box (Ticket P.1.3 — dedicated user + DM autologin + XDG autostart):
+  sudo ./scripts/install-autostart.sh --appimage dist/*.AppImage
+  # installs AppImage under /opt/adnabbit/, reboot helper, sudoers/polkit
 USAGE
 }
 
@@ -124,7 +128,11 @@ echo "  ADNNABIT_KIOSK=0 npm start"
 echo "  # or while running: Ctrl+Shift+Alt+Q (exits kiosk chrome only)"
 echo "Clear pairing: rm ~/.adnabbit-player/device-token.json"
 echo ""
-echo "Opt-in autostart later:"
+echo "Opt-in autostart later (dev / current user session):"
 echo "  ./install.sh --autostart"
 echo "  ./install.sh --systemd"
-echo "See README.md for mini-PC + packaging notes."
+echo ""
+echo "Mini-PC kiosk box (P.1.3 — requires root, dedicated user + DM autologin):"
+echo "  npm run dist:appimage"
+echo "  sudo ./scripts/install-autostart.sh --appimage dist/AdNabbit*.AppImage"
+echo "See README.md for reboot helper (P.1.2) + polkit/sudoers notes."
