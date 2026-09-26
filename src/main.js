@@ -29,6 +29,8 @@ let playlistTimer = null;
 let kioskActive = wantKioskAtStart();
 /** True while showing first-run setup (never kiosk). */
 let setupMode = false;
+/** Ticket O — last playlistEpoch seen from API (heartbeat / playlist). */
+let lastPlaylistEpoch = 0;
 
 function applyKioskChrome(win, enabled) {
   if (!win || win.isDestroyed()) return;
@@ -218,6 +220,9 @@ async function refreshPlaylist() {
   }
   try {
     const playlist = await api.getPlaylist(creds.deviceToken);
+    if (typeof playlist.playlistEpoch === "number") {
+      lastPlaylistEpoch = Math.max(lastPlaylistEpoch, playlist.playlistEpoch);
+    }
     // Cache assets locally and rewrite URLs to file://
     const items = [];
     for (const item of playlist.items || []) {
@@ -267,7 +272,15 @@ async function doHeartbeat() {
   const creds = loadToken();
   if (!creds?.deviceToken) return;
   try {
-    await api.heartbeat(creds.deviceToken);
+    const hb = await api.heartbeat(creds.deviceToken);
+    // Ticket O — server bumped playlistEpoch → re-fetch immediately (poll interval unchanged)
+    const epoch = hb?.playlistEpoch;
+    if (typeof epoch === "number" && epoch > lastPlaylistEpoch) {
+      console.log(
+        `heartbeat playlistEpoch ${lastPlaylistEpoch} → ${epoch}; refreshing playlist`
+      );
+      await refreshPlaylist();
+    }
   } catch (e) {
     console.warn("heartbeat failed", e.message);
   }
@@ -439,6 +452,7 @@ ipcMain.handle("setup:clear-pairing", async () => {
     };
   }
   clearToken();
+  lastPlaylistEpoch = 0;
   await showSetupScreen();
   return { ok: true };
 });

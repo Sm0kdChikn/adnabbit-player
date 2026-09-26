@@ -105,12 +105,17 @@ AppImage builds may need FUSE / `libfuse2` on some hosts (`sudo apt install libf
 
 Setup GUI is always **windowed** (not kiosk) until claim succeeds.
 
+
+## Playlist refresh (Ticket O)
+
+The web admin/host can click **Refresh playlist** on a paired screen. That bumps `Device.playlistEpoch` on the API. Each **heartbeat** (and playlist GET) returns `playlistEpoch`; if it is newer than the player's last seen value, Electron immediately calls `refreshPlaylist()` — no permanent poll-interval change. Soft miss: no WebSockets.
+
 ## Smoke steps
 
 ```bash
 # After claim (no GUI required):
 npm run kiosk:headless
-# → heartbeat OK, playlist items, assets cached, play-logs 202
+# → heartbeat OK (+ playlistEpoch), playlist items, assets cached, play-logs 202
 
 npm start                      # Electron (setup if unpaired, else kiosk)
 ADNNABIT_KIOSK=0 npm start     # windowed/debug escape

@@ -23,9 +23,15 @@ async function main() {
 
   const hb = await api.heartbeat(creds.deviceToken);
   console.log("heartbeat", hb);
+  if (typeof hb?.playlistEpoch === "number") {
+    console.log(`playlistEpoch: ${hb.playlistEpoch}`);
+  }
 
   const playlist = await api.getPlaylist(creds.deviceToken);
   console.log(`playlist items: ${playlist.items?.length || 0}`);
+  if (typeof playlist.playlistEpoch === "number") {
+    console.log(`playlistEpoch: ${playlist.playlistEpoch}`);
+  }
 
   const samplePath = path.join(dataDir, "playlist-sample.json");
   fs.writeFileSync(samplePath, JSON.stringify(playlist, null, 2));
