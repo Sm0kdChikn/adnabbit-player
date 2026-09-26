@@ -265,3 +265,13 @@ Playlist, heartbeat, and claim responses include an `hours` object (`timezone`, 
 - Hours are cached with the playlist so a briefly offline player still enforces blackout.
 
 Hard display-off (CEC/DPMS) is not implemented.
+
+## Ticket R — Fleet heartbeat fields
+
+Heartbeat POST body may include:
+
+- `playerVersion` — from `package.json` (always sent by Electron + headless agent)
+- `diskFreeBytes` / `diskTotalBytes` — optional; not reported yet (server soft-miss / TODO)
+
+Admin fleet board uses these for version display; disk pressure only when values are present.
+

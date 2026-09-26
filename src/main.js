@@ -19,6 +19,20 @@ const {
 const api = require("./api");
 const { evaluateHours } = require("./open-hours");
 
+/** Ticket R — report package version on heartbeat. */
+function getPlayerVersion() {
+  try {
+    return require("../package.json").version || null;
+  } catch {
+    try {
+      return app.getVersion?.() || null;
+    } catch {
+      return null;
+    }
+  }
+}
+const PLAYER_VERSION = getPlayerVersion();
+
 const HEARTBEAT_MS = 60_000;
 const PLAYLIST_MS = 30_000;
 /** Ticket P.1 — drain remote-control queue. */
@@ -621,6 +635,8 @@ async function doHeartbeat() {
   try {
     const hb = await api.heartbeat(creds.deviceToken, {
       playbackState: lastPlaybackState,
+      // Ticket R — surface version on fleet board (disk stats soft-miss / TODO)
+      ...(PLAYER_VERSION ? { playerVersion: PLAYER_VERSION } : {}),
     });
     // Ticket Q — refresh local hours cache from heartbeat
     if (hb?.hours) {

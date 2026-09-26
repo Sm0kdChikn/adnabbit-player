@@ -21,7 +21,11 @@ async function main() {
   console.log(`API ${getApiBase()}`);
   console.log(`Screen ${creds.screenName} (${creds.screenId})`);
 
-  const hb = await api.heartbeat(creds.deviceToken);
+  const hb = await api.heartbeat(creds.deviceToken, {
+    playerVersion: (() => {
+      try { return require("../package.json").version; } catch { return undefined; }
+    })(),
+  });
   console.log("heartbeat", hb);
   if (hb?.hours) {
     console.log(
