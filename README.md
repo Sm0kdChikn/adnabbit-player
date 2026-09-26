@@ -118,14 +118,20 @@ When the admin clicks **View screen**, the API bumps `screenshotEpoch`. Heartbea
 
 Headless smoke agent: if the command is present, logs and **skips** capture (no BrowserWindow).
 
-For true live OS remoting (mouse/keyboard), operators should use **Tailscale + wayvnc** (ops path B) — not built into the player.
+## Remote control (Ticket P.1)
+
+Admin queues mouse/keyboard events on the web API. The player polls `POST /api/device/input` every ~2s (and when heartbeat reports `commands.inputPending`), then applies events with Electron `webContents.sendInputEvent` to the kiosk window. Named command `exitKiosk` calls the existing chrome exit path.
+
+Headless smoke agent drains and **logs** events (cannot apply without BrowserWindow).
+
+For full **OS** remoting outside Electron, operators should still use **Tailscale + wayvnc** (ops path B).
 
 ## Smoke steps
 
 ```bash
 # After claim (no GUI required):
 npm run kiosk:headless
-# → heartbeat OK (+ playlistEpoch, commands.captureScreenshot), playlist items, assets cached, play-logs 202
+# → heartbeat OK (+ playlistEpoch, commands.captureScreenshot/inputPending), input poll, playlist items, assets cached, play-logs 202
 
 npm start                      # Electron (setup if unpaired, else kiosk)
 ADNNABIT_KIOSK=0 npm start     # windowed/debug escape

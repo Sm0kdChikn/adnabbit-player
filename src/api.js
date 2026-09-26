@@ -81,6 +81,10 @@ async function cacheAsset(token, item) {
 }
 
 
+async function pollInput(token) {
+  return apiFetch("/api/device/input", { method: "POST", token });
+}
+
 async function postScreenshot(token, jpegBuffer) {
   const res = await fetch(`${getApiBase()}/api/device/screenshot`, {
     method: "POST",
@@ -112,6 +116,7 @@ module.exports = {
   getPlaylist,
   postPlayLogs,
   postScreenshot,
+  pollInput,
   cacheAsset,
   apiFetch,
 };

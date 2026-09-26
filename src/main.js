@@ -16,6 +16,8 @@ const api = require("./api");
 
 const HEARTBEAT_MS = 60_000;
 const PLAYLIST_MS = 30_000;
+/** Ticket P.1 — drain remote-control queue. */
+const INPUT_POLL_MS = 2_000;
 
 /** ADNNABIT_KIOSK=0 always wins at start → windowed/debug. Anything else → kiosk. */
 function wantKioskAtStart() {
@@ -25,6 +27,7 @@ function wantKioskAtStart() {
 let mainWindow = null;
 let heartbeatTimer = null;
 let playlistTimer = null;
+let inputTimer = null;
 /** Runtime flag: may drop to false after Ctrl+Shift+Alt+Q (kiosk chrome only). */
 let kioskActive = wantKioskAtStart();
 /** True while showing first-run setup (never kiosk). */
@@ -114,6 +117,10 @@ function stopLoops() {
   if (playlistTimer) {
     clearInterval(playlistTimer);
     playlistTimer = null;
+  }
+  if (inputTimer) {
+    clearInterval(inputTimer);
+    inputTimer = null;
   }
 }
 
@@ -268,6 +275,117 @@ async function refreshPlaylist() {
   }
 }
 
+/** Ticket P.1 — apply admin remote-control events to the kiosk BrowserWindow. */
+function scaleRemotePoint(ev) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { x: Math.round(ev.x || 0), y: Math.round(ev.y || 0) };
+  }
+  const [cw, ch] = mainWindow.getContentSize();
+  const capW = ev.captureWidth;
+  const capH = ev.captureHeight;
+  if (
+    typeof capW === "number" &&
+    capW > 0 &&
+    typeof capH === "number" &&
+    capH > 0 &&
+    cw > 0 &&
+    ch > 0
+  ) {
+    return {
+      x: Math.round((ev.x / capW) * cw),
+      y: Math.round((ev.y / capH) * ch),
+    };
+  }
+  return { x: Math.round(ev.x || 0), y: Math.round(ev.y || 0) };
+}
+
+function applyRemoteInputEvents(events) {
+  if (!Array.isArray(events) || events.length === 0) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn("remote input skipped — no BrowserWindow");
+    return;
+  }
+  const wc = mainWindow.webContents;
+  for (const ev of events) {
+    try {
+      if (!ev || typeof ev !== "object") continue;
+      if (ev.type === "command") {
+        if (ev.name === "exitKiosk") {
+          console.log("remote command: exitKiosk");
+          exitKioskChromeOnly();
+        } else {
+          console.log("remote command ignored:", ev.name);
+        }
+        continue;
+      }
+      if (
+        ev.type === "mouseDown" ||
+        ev.type === "mouseUp" ||
+        ev.type === "mouseMove" ||
+        ev.type === "mouseClick"
+      ) {
+        const { x, y } = scaleRemotePoint(ev);
+        const button = ev.button || "left";
+        const clickCount = ev.clickCount || 1;
+        if (ev.type === "mouseClick") {
+          wc.sendInputEvent({
+            type: "mouseDown",
+            x,
+            y,
+            button,
+            clickCount,
+          });
+          wc.sendInputEvent({
+            type: "mouseUp",
+            x,
+            y,
+            button,
+            clickCount,
+          });
+        } else {
+          wc.sendInputEvent({
+            type: ev.type,
+            x,
+            y,
+            button,
+            clickCount,
+          });
+        }
+        continue;
+      }
+      if (ev.type === "keyDown" || ev.type === "keyUp" || ev.type === "char") {
+        const payload = {
+          type: ev.type,
+          keyCode: String(ev.keyCode || ""),
+        };
+        if (Array.isArray(ev.modifiers) && ev.modifiers.length) {
+          payload.modifiers = ev.modifiers;
+        }
+        wc.sendInputEvent(payload);
+        continue;
+      }
+      console.warn("remote input unknown type", ev.type);
+    } catch (e) {
+      console.warn("remote input apply failed", e.message);
+    }
+  }
+  console.log(`remote input applied ${events.length} event(s)`);
+}
+
+async function pollRemoteInput() {
+  const creds = loadToken();
+  if (!creds?.deviceToken) return;
+  try {
+    const res = await api.pollInput(creds.deviceToken);
+    const events = res?.events;
+    if (Array.isArray(events) && events.length > 0) {
+      applyRemoteInputEvents(events);
+    }
+  } catch (e) {
+    console.warn("input poll failed", e.message);
+  }
+}
+
 /** Ticket P — capture BrowserWindow to JPEG and POST /api/device/screenshot. */
 async function captureAndUploadScreenshot(token) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -310,6 +428,10 @@ async function doHeartbeat() {
       );
       await captureAndUploadScreenshot(creds.deviceToken);
     }
+    // Ticket P.1 — drain input if heartbeat says queue non-empty (poll loop is primary)
+    if (hb?.commands?.inputPending) {
+      await pollRemoteInput();
+    }
   } catch (e) {
     console.warn("heartbeat failed", e.message);
   }
@@ -318,8 +440,12 @@ async function doHeartbeat() {
 function startLoops() {
   refreshPlaylist();
   doHeartbeat();
+  void pollRemoteInput();
   playlistTimer = setInterval(refreshPlaylist, PLAYLIST_MS);
   heartbeatTimer = setInterval(doHeartbeat, HEARTBEAT_MS);
+  inputTimer = setInterval(() => {
+    void pollRemoteInput();
+  }, INPUT_POLL_MS);
 }
 
 function friendlyClaimError(err) {

@@ -32,6 +32,18 @@ async function main() {
       `captureScreenshot requested (screenshotEpoch=${hb.screenshotEpoch}) — skipped in headless (no BrowserWindow)`
     );
   }
+  if (hb?.commands?.inputPending) {
+    console.log("inputPending signaled on heartbeat");
+  }
+
+  // Ticket P.1 — drain remote-control queue (log only; no BrowserWindow to apply)
+  try {
+    const input = await api.pollInput(creds.deviceToken);
+    const n = input?.events?.length || 0;
+    console.log(`input poll: ${n} event(s)`, n ? input.events : "");
+  } catch (e) {
+    console.warn("input poll failed", e.message);
+  }
 
   const playlist = await api.getPlaylist(creds.deviceToken);
   console.log(`playlist items: ${playlist.items?.length || 0}`);
