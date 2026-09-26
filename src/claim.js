@@ -42,6 +42,11 @@ async function main() {
     timezone: result.timezone,
     claimedAt: new Date().toISOString(),
     apiBase: getApiBase(),
+    offlinePolicy: result.offlinePolicy || "PLAY_CACHE",
+    offlineCacheTtlHours:
+      typeof result.offlineCacheTtlHours === "number"
+        ? result.offlineCacheTtlHours
+        : 24,
   };
   saveToken(payload);
   console.log("Paired OK");
@@ -49,6 +54,9 @@ async function main() {
   console.log(`  host:   ${payload.hostName}`);
   console.log(`  tz:     ${payload.timezone}`);
   console.log(`  api:    ${payload.apiBase}`);
+  console.log(
+    `  offline: ${payload.offlinePolicy} ttl=${payload.offlineCacheTtlHours}h`
+  );
   console.log(`  token:  ${tokenPath}`);
   console.log("Run: npm start  (or open the AppImage)");
 }

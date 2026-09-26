@@ -18,6 +18,7 @@ const {
 } = require("./config");
 const api = require("./api");
 const { evaluateHours } = require("./open-hours");
+const offlinePolicyLib = require("./offline-policy");
 
 /** Ticket R — report package version on heartbeat. */
 function getPlayerVersion() {
@@ -68,6 +69,13 @@ let lastHours = null;
 /** Ticket U — download/quiet hours; null = legacy allow. */
 let lastDownloadHours = null;
 let lastDownloadAllowed = true;
+/** Ticket V — offline play policy from claim/heartbeat/playlist. */
+let lastOfflinePolicy = offlinePolicyLib.DEFAULT_POLICY;
+let lastOfflineCacheTtlHours = offlinePolicyLib.DEFAULT_TTL_HOURS;
+/** ms timestamp of last successful playlist or heartbeat. */
+let lastApiOkAt = null;
+/** Current offline mode applied to renderer: null | play_cache | blackout */
+let lastOfflineMode = null;
 
 function applyDownloadHours(payload, explicitAllowed) {
   if (payload && typeof payload === "object") {
@@ -82,6 +90,111 @@ function applyDownloadHours(payload, explicitAllowed) {
     lastDownloadAllowed = explicitAllowed;
   }
 }
+
+function applyOfflinePolicyFields(payload) {
+  if (!payload || typeof payload !== "object") return;
+  if (payload.offlinePolicy != null) {
+    lastOfflinePolicy = offlinePolicyLib.normalizePolicy(payload.offlinePolicy);
+  }
+  if (payload.offlineCacheTtlHours != null) {
+    lastOfflineCacheTtlHours = offlinePolicyLib.normalizeTtlHours(
+      payload.offlineCacheTtlHours
+    );
+  }
+}
+
+function markApiOk() {
+  lastApiOkAt = Date.now();
+  if (lastOfflineMode) {
+    console.log(`Ticket V — API reachable again (was offlineMode=${lastOfflineMode})`);
+  }
+  lastOfflineMode = null;
+}
+
+/**
+ * Ticket V — when API stale/unreachable, either loop cache or soft-blackout.
+ * @returns {{ mode: string, playlist?: object } | null} null = still online
+ */
+function resolveOfflinePlayback() {
+  const offline = offlinePolicyLib.isApiStale(lastApiOkAt);
+  if (!offline) return null;
+
+  const cached = loadPlaylistCache();
+  const age = offlinePolicyLib.cacheAgeHours(cached?.cachedAt);
+  const mode = offlinePolicyLib.decideOfflinePlayback({
+    offline: true,
+    policy: lastOfflinePolicy,
+    ttlHours: lastOfflineCacheTtlHours,
+    cacheAgeHours: age,
+  });
+  lastOfflineMode = mode;
+
+  if (mode === "blackout") {
+    console.warn(
+      `Ticket V — offline blackout (policy=${lastOfflinePolicy} ttl=${lastOfflineCacheTtlHours}h cacheAge=${age == null ? "none" : age.toFixed(2) + "h"})`
+    );
+    return {
+      mode: "blackout",
+      playlist: {
+        ...(cached || {}),
+        items: [],
+        offline: true,
+        offlineMode: "blackout",
+        offlinePolicy: lastOfflinePolicy,
+        offlineCacheTtlHours: lastOfflineCacheTtlHours,
+        screenName: cached?.screenName,
+        hostName: cached?.hostName,
+      },
+    };
+  }
+
+  // play_cache — stretch item windows so content loops for remaining TTL
+  const ttlMs = Math.max(0, lastOfflineCacheTtlHours * 60 * 60 * 1000);
+  const ageMs =
+    age != null && Number.isFinite(age) ? age * 60 * 60 * 1000 : 0;
+  const remainMs = Math.max(60_000, ttlMs - ageMs);
+  const startAt = new Date(Date.now() - 60_000).toISOString();
+  const endAt = new Date(Date.now() + remainMs).toISOString();
+  const items = (cached?.items || []).map((it) => ({
+    ...it,
+    startAt,
+    endAt,
+  }));
+  console.log(
+    `Ticket V — offline play_cache (${items.length} items, ~${(remainMs / 3600000).toFixed(2)}h remaining)`
+  );
+  return {
+    mode: "play_cache",
+    playlist: {
+      ...(cached || {}),
+      items,
+      offline: true,
+      offlineMode: "play_cache",
+      offlinePolicy: lastOfflinePolicy,
+      offlineCacheTtlHours: lastOfflineCacheTtlHours,
+    },
+  };
+}
+
+function pushOfflinePlayback(resolved) {
+  if (!resolved) return;
+  if (resolved.mode === "blackout") {
+    lastPlaybackState = "BLACKOUT";
+  }
+  mainWindow?.webContents.send("player:playlist", resolved.playlist);
+  mainWindow?.webContents.send("player:status", {
+    ok: true,
+    offline: true,
+    offlineMode: resolved.mode,
+    screenName: resolved.playlist.screenName,
+    itemCount: (resolved.playlist.items || []).length,
+    warning:
+      resolved.mode === "blackout"
+        ? "Offline — soft blackout (policy / TTL)"
+        : "Offline — playing cached playlist",
+  });
+}
+
 
 
 /** Ticket P.1.3 — branded splash until setup/playback window is ready. */
@@ -457,6 +570,9 @@ async function refreshPlaylist() {
     }
     // Ticket U — honor downloadAllowed from playlist (empty = allow)
     applyDownloadHours(playlist.downloadHours, playlist.downloadAllowed);
+    // Ticket V — persist offline play policy with cache
+    applyOfflinePolicyFields(playlist);
+    markApiOk();
     const downloadAllowed = lastDownloadAllowed !== false;
 
     // Cache assets locally and rewrite URLs to file://
@@ -504,6 +620,8 @@ async function refreshPlaylist() {
       cachedAt: new Date().toISOString(),
       downloadAllowed,
       downloadDeferredCount: deferredDownloads,
+      offlinePolicy: lastOfflinePolicy,
+      offlineCacheTtlHours: lastOfflineCacheTtlHours,
     };
     if (playlist.hours) {
       lastHours = playlist.hours;
@@ -526,22 +644,29 @@ async function refreshPlaylist() {
           : undefined,
     });
   } catch (e) {
-    console.warn("playlist poll failed, using cache", e.message);
-    const cached = loadPlaylistCache();
-    if (cached) {
-      mainWindow?.webContents.send("player:playlist", {
-        ...cached,
-        offline: true,
-      });
-      mainWindow?.webContents.send("player:status", {
-        ok: true,
-        offline: true,
-        screenName: cached.screenName,
-        itemCount: (cached.items || []).length,
-        warning: e.message,
-      });
+    console.warn("playlist poll failed", e.message);
+    // Ticket V — API unreachable: apply offline policy (cache loop or blackout)
+    const resolved = resolveOfflinePlayback();
+    if (resolved) {
+      pushOfflinePlayback(resolved);
     } else {
-      mainWindow?.webContents.send("player:status", { error: e.message });
+      // Still within grace — serve last cache without rewriting windows
+      const cached = loadPlaylistCache();
+      if (cached) {
+        mainWindow?.webContents.send("player:playlist", {
+          ...cached,
+          offline: true,
+        });
+        mainWindow?.webContents.send("player:status", {
+          ok: true,
+          offline: true,
+          screenName: cached.screenName,
+          itemCount: (cached.items || []).length,
+          warning: e.message,
+        });
+      } else {
+        mainWindow?.webContents.send("player:status", { error: e.message });
+      }
     }
   }
 }
@@ -706,6 +831,9 @@ async function doHeartbeat() {
     }
     // Ticket U — download / quiet hours
     applyDownloadHours(hb?.downloadHours, hb?.downloadAllowed);
+    // Ticket V
+    applyOfflinePolicyFields(hb);
+    markApiOk();
     if (hb?.downloadAllowed === false) {
       console.log(
         `heartbeat downloadAllowed=false (${hb?.downloadHours?.reason || "quiet"})`
@@ -732,6 +860,9 @@ async function doHeartbeat() {
     }
   } catch (e) {
     console.warn("heartbeat failed", e.message);
+    // Ticket V — no successful heartbeat; if past grace, enforce offline policy
+    const resolved = resolveOfflinePlayback();
+    if (resolved) pushOfflinePlayback(resolved);
   }
 }
 
@@ -797,6 +928,11 @@ ipcMain.handle("player:get-bootstrap", () => {
   const creds = loadToken();
   const cached = loadPlaylistCache();
   if (cached?.hours) lastHours = cached.hours;
+  if (cached) applyOfflinePolicyFields(cached);
+  // Ticket V — optimistic: start grace from boot so we do not blackout before first poll
+  if (creds?.deviceToken && lastApiOkAt == null) {
+    lastApiOkAt = Date.now();
+  }
   return {
     claimed: !!creds?.deviceToken,
     screenName: creds?.screenName || cached?.screenName || null,
@@ -806,6 +942,9 @@ ipcMain.handle("player:get-bootstrap", () => {
     hours: lastHours || cached?.hours || null,
     downloadAllowed: lastDownloadAllowed,
     downloadHours: lastDownloadHours || cached?.downloadHours || null,
+    offlinePolicy: lastOfflinePolicy,
+    offlineCacheTtlHours: lastOfflineCacheTtlHours,
+    offlineMode: lastOfflineMode,
     kiosk: kioskActive,
     canClearPairing: !kioskActive || process.env.ADNNABIT_KIOSK === "0",
   };
@@ -823,10 +962,22 @@ ipcMain.handle("player:play-log", async (_e, event) => {
   const creds = loadToken();
   if (!creds?.deviceToken) return { skipped: true };
   // Ticket Q — never emit PoP while outside open hours (soft blackout)
+  // Ticket V — never emit PoP while API stale / offline policy active
   const open = evaluateHours(lastHours);
-  if (!open.isOpen || lastPlaybackState === "BLACKOUT") {
-    console.log("play-log muted — closed hours / blackout");
-    return { skipped: true, reason: "blackout" };
+  const apiStale = offlinePolicyLib.isApiStale(lastApiOkAt);
+  if (
+    !open.isOpen ||
+    lastPlaybackState === "BLACKOUT" ||
+    apiStale ||
+    lastOfflineMode
+  ) {
+    const reason = apiStale || lastOfflineMode
+      ? lastOfflineMode === "play_cache"
+        ? "offline_cache"
+        : "offline_blackout"
+      : "blackout";
+    console.log(`play-log muted — ${reason}`);
+    return { skipped: true, reason };
   }
   try {
     return await api.postPlayLogs(creds.deviceToken, [event]);
@@ -876,6 +1027,8 @@ ipcMain.handle("setup:claim", async (_e, payload = {}) => {
   try {
     console.log(`Claiming against ${getApiBase()} …`);
     const result = await api.claim(codeRaw.toUpperCase());
+    applyOfflinePolicyFields(result);
+    markApiOk();
     const tokenPayload = {
       deviceToken: result.deviceToken,
       screenId: result.screenId,
@@ -884,8 +1037,24 @@ ipcMain.handle("setup:claim", async (_e, payload = {}) => {
       timezone: result.timezone,
       claimedAt: new Date().toISOString(),
       apiBase: getApiBase(),
+      offlinePolicy: lastOfflinePolicy,
+      offlineCacheTtlHours: lastOfflineCacheTtlHours,
     };
     saveToken(tokenPayload);
+    // Seed playlist cache with policy so cold start honors it
+    const seed = loadPlaylistCache() || {};
+    savePlaylistCache({
+      ...seed,
+      screenName: result.screenName,
+      hostName: result.hostName,
+      timezone: result.timezone,
+      hours: result.hours || seed.hours,
+      downloadHours: result.downloadHours || seed.downloadHours,
+      offlinePolicy: lastOfflinePolicy,
+      offlineCacheTtlHours: lastOfflineCacheTtlHours,
+      cachedAt: new Date().toISOString(),
+      items: seed.items || [],
+    });
     // Transition after a short beat so setup UI can show success
     setTimeout(() => {
       showPlayerAfterClaim().catch((e) =>

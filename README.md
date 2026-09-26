@@ -282,3 +282,14 @@ Heartbeat and playlist include `downloadAllowed` + `downloadHours` (host TZ week
 - When `downloadAllowed` is false: playlist metadata still refreshes; **new** asset fetches are deferred. Existing cache hits still play.
 - Status / logs: `Quiet hours — deferred N download(s)` / `download quiet hours — deferring prefetch…`
 - Soft miss: force single fetch on hard cache miss (prefer defer + stale/empty).
+
+## Ticket V — Offline play policy
+
+Host `offlinePolicy` (`PLAY_CACHE` | `BLACKOUT`, default `PLAY_CACHE`) and `offlineCacheTtlHours` (default 24, `0` = blackout immediately) arrive on claim / heartbeat / playlist and are stored with the playlist cache.
+
+When the API is unreachable (or no successful contact within 5‑minute grace):
+
+- **BLACKOUT** or TTL **0** or cache older than TTL → soft blackout, empty playlist, **no play-logs**
+- **PLAY_CACHE** within TTL → loop last good playlist (item windows stretched), mute PoP while offline
+
+Soft miss: per-screen override, P2P, OptiSigns.

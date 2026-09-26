@@ -1,6 +1,6 @@
 {
   "name": "adnabbit-player",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "AdNabbit Linux Electron kiosk player with first-run setup GUI",
   "private": true,
   "author": "AdNabbit <ops@adnabbit.com>",
@@ -14,7 +14,7 @@
     "dist:dir": "electron-builder --linux dir",
     "postinstall": "node -e \"console.log('adnabbit-player ready')\"",
     "install:kiosk": "echo \"Run as root: sudo ./scripts/install-autostart.sh --appimage <path>\"",
-    "check": "node --check src/main.js && node --check src/headless-agent.js && node --check src/api.js"
+    "check": "node --check src/main.js && node --check src/offline-policy.js && node --check src/headless-agent.js && node --check src/api.js"
   },
   "engines": {
     "node": ">=18"

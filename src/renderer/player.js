@@ -231,10 +231,31 @@
   }
 
   function applyPlaylist(pl) {
+    // Ticket V — offline policy blackout (distinct from closed hours)
+    if (pl?.offlineMode === "blackout") {
+      queue = [];
+      const label = [pl?.hostName, pl?.screenName].filter(Boolean).join(" · ");
+      if (label) screenLabel.textContent = label + " (offline)";
+      showBlackout(
+        pl.offlinePolicy === "BLACKOUT"
+          ? "Offline · host policy BLACKOUT"
+          : "Offline · cache TTL expired / no cache"
+      );
+      setStatus("Offline · soft blackout");
+      return;
+    }
     queue = pl?.items || [];
     if (pl?.hours) applyHours(pl.hours);
     const label = [pl?.hostName, pl?.screenName].filter(Boolean).join(" · ");
-    if (label) screenLabel.textContent = label + (pl.offline ? " (offline)" : "");
+    if (label) {
+      screenLabel.textContent =
+        label +
+        (pl.offline
+          ? pl.offlineMode === "play_cache"
+            ? " (offline · cache)"
+            : " (offline)"
+          : "");
+    }
     index = 0;
     checkHoursAndPlay();
   }
@@ -279,7 +300,14 @@
     window.adnabbit.onStatus((s) => {
       if (s.error) setStatus(`Error: ${s.error}`);
       else if (blackout) setStatus("Closed hours · soft blackout");
-      else if (s.offline) setStatus(`Offline · ${s.itemCount || 0} cached`);
+      else if (s.offlineMode === "blackout")
+        setStatus("Offline · soft blackout");
+      else if (s.offline)
+        setStatus(
+          s.offlineMode === "play_cache"
+            ? `Offline · playing cache · ${s.itemCount || 0} items`
+            : `Offline · ${s.itemCount || 0} cached`
+        );
       else if (s.downloadAllowed === false) {
         const def =
           typeof s.downloadDeferredCount === "number" && s.downloadDeferredCount > 0
