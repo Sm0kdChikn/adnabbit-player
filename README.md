@@ -110,12 +110,22 @@ Setup GUI is always **windowed** (not kiosk) until claim succeeds.
 
 The web admin/host can click **Refresh playlist** on a paired screen. That bumps `Device.playlistEpoch` on the API. Each **heartbeat** (and playlist GET) returns `playlistEpoch`; if it is newer than the player's last seen value, Electron immediately calls `refreshPlaylist()` — no permanent poll-interval change. Soft miss: no WebSockets.
 
+
+
+## Remote view / screenshot (Ticket P)
+
+When the admin clicks **View screen**, the API bumps `screenshotEpoch`. Heartbeat returns `commands.captureScreenshot: true`; Electron captures the kiosk `BrowserWindow` via `webContents.capturePage()`, JPEG-encodes it, and `POST`s to `/api/device/screenshot` (does **not** exit kiosk).
+
+Headless smoke agent: if the command is present, logs and **skips** capture (no BrowserWindow).
+
+For true live OS remoting (mouse/keyboard), operators should use **Tailscale + wayvnc** (ops path B) — not built into the player.
+
 ## Smoke steps
 
 ```bash
 # After claim (no GUI required):
 npm run kiosk:headless
-# → heartbeat OK (+ playlistEpoch), playlist items, assets cached, play-logs 202
+# → heartbeat OK (+ playlistEpoch, commands.captureScreenshot), playlist items, assets cached, play-logs 202
 
 npm start                      # Electron (setup if unpaired, else kiosk)
 ADNNABIT_KIOSK=0 npm start     # windowed/debug escape
@@ -161,4 +171,4 @@ Electron kiosk is **not** a full OS lockdown. For a dedicated Lobby TV box, oper
 
 ## Out of scope
 
-Fleet management, custom ISO, F2 play-log persistence, OptiSigns cutover, forced OS lockdown, Stripe.
+Fleet management, custom ISO, F2 play-log persistence, OptiSigns cutover, forced OS lockdown, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc).

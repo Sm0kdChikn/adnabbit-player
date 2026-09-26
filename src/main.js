@@ -268,6 +268,28 @@ async function refreshPlaylist() {
   }
 }
 
+/** Ticket P — capture BrowserWindow to JPEG and POST /api/device/screenshot. */
+async function captureAndUploadScreenshot(token) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn("screenshot skipped — no BrowserWindow");
+    return;
+  }
+  try {
+    const image = await mainWindow.webContents.capturePage();
+    const jpeg = image.toJPEG(70);
+    if (!jpeg || jpeg.length === 0) {
+      console.warn("screenshot skipped — empty capture");
+      return;
+    }
+    const result = await api.postScreenshot(token, jpeg);
+    console.log(
+      `screenshot uploaded ${result?.bytes || jpeg.length}B epoch=${result?.screenshotCapturedEpoch}`
+    );
+  } catch (e) {
+    console.warn("screenshot capture/upload failed", e.message);
+  }
+}
+
 async function doHeartbeat() {
   const creds = loadToken();
   if (!creds?.deviceToken) return;
@@ -280,6 +302,13 @@ async function doHeartbeat() {
         `heartbeat playlistEpoch ${lastPlaylistEpoch} → ${epoch}; refreshing playlist`
       );
       await refreshPlaylist();
+    }
+    // Ticket P — admin remote-view request (epoch-style via commands.captureScreenshot)
+    if (hb?.commands?.captureScreenshot) {
+      console.log(
+        `heartbeat captureScreenshot (screenshotEpoch=${hb.screenshotEpoch}); capturing`
+      );
+      await captureAndUploadScreenshot(creds.deviceToken);
     }
   } catch (e) {
     console.warn("heartbeat failed", e.message);

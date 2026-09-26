@@ -26,6 +26,12 @@ async function main() {
   if (typeof hb?.playlistEpoch === "number") {
     console.log(`playlistEpoch: ${hb.playlistEpoch}`);
   }
+  if (hb?.commands?.captureScreenshot) {
+    // Soft miss / headless: no BrowserWindow — skip capture gracefully
+    console.log(
+      `captureScreenshot requested (screenshotEpoch=${hb.screenshotEpoch}) — skipped in headless (no BrowserWindow)`
+    );
+  }
 
   const playlist = await api.getPlaylist(creds.deviceToken);
   console.log(`playlist items: ${playlist.items?.length || 0}`);

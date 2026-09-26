@@ -80,11 +80,38 @@ async function cacheAsset(token, item) {
   return dest;
 }
 
+
+async function postScreenshot(token, jpegBuffer) {
+  const res = await fetch(`${getApiBase()}/api/device/screenshot`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "image/jpeg",
+    },
+    body: jpegBuffer,
+  });
+  const textBody = await res.text();
+  let data = null;
+  try {
+    data = textBody ? JSON.parse(textBody) : null;
+  } catch {
+    data = { raw: textBody };
+  }
+  if (!res.ok) {
+    const err = new Error(data?.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 module.exports = {
   claim,
   heartbeat,
   getPlaylist,
   postPlayLogs,
+  postScreenshot,
   cacheAsset,
   apiFetch,
 };
