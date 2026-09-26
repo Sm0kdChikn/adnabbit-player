@@ -1,6 +1,6 @@
 {
   "name": "adnabbit-player",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AdNabbit Linux Electron kiosk player with first-run setup GUI",
   "private": true,
   "author": "AdNabbit <ops@adnabbit.com>",

@@ -40,7 +40,7 @@ body {
   margin-bottom: 28px;
 }
 
-.logo-img { display:block; margin:0 auto 0.5rem; border-radius:12px; }
+.logo-img { display:block; margin:0 auto 0.5rem; width:64px; height:64px; border-radius:50%; overflow:hidden; object-fit:cover; object-position:center; }
 .logo {
   color: var(--cyan);
   font-weight: 700;

@@ -186,7 +186,7 @@ What the script does:
 5. Enables `loginctl enable-linger` for the user
 6. Installs `adnabbit-reboot` + sudoers NOPASSWD (+ polkit)
 
-Boot flow: power-on → DM autologin as `adnabbit` → XDG starts AppImage → **Electron branded splash** (logo) → unpaired **setup/claim** GUI, or paired **kiosk playback** (P.1.1 preference persists).
+Boot flow: power-on → DM autologin as `adnabbit` → XDG starts AppImage → **Electron branded splash** (circular cyan rabbit logo) → unpaired **setup/claim** GUI, or paired **kiosk playback** (P.1.1 preference persists).
 
 No Plymouth theme / custom ISO in this ticket.
 
