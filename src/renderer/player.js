@@ -22,6 +22,10 @@
   let hoursTimer = null;
   /** LIVE | BLACKOUT | IDLE | EMPTY */
   let playbackState = "IDLE";
+  /** Ticket Y — last applied volume 0–100 (media element) */
+  let currentVolume = 80;
+  /** Ticket Y — last applied brightness 0–100 (CSS soft path) */
+  let currentBrightness = 100;
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -230,7 +234,9 @@
       image.classList.remove("playing");
       video.classList.add("playing");
       video.src = src;
-      video.muted = true;
+      // Ticket Y — honor remote volume (was always muted pre-Y)
+      video.volume = currentVolume / 100;
+      video.muted = currentVolume === 0;
       video.play().catch(() => setTimeout(checkHoursAndPlay, 1000));
       setStatus(`Playing ${item.creativeName}`);
       reportPlaybackState("LIVE");
@@ -272,6 +278,32 @@
 
   function applyMaintenance(m) {
     if (m && typeof m === "object") maintenance = m;
+  }
+
+  /** Ticket Y — apply volume to <video> and CSS brightness filter. */
+  function applyOutput(o) {
+    if (!o || typeof o !== "object") return;
+    if (typeof o.volume === "number" && Number.isFinite(o.volume)) {
+      currentVolume = Math.min(100, Math.max(0, Math.round(o.volume)));
+      const frac = currentVolume / 100;
+      try {
+        video.volume = frac;
+        // Unmute when volume > 0 so remote volume is audible; keep muted at 0
+        video.muted = currentVolume === 0;
+      } catch (e) {
+        console.warn("volume apply failed", e);
+      }
+    }
+    if (typeof o.brightness === "number" && Number.isFinite(o.brightness)) {
+      currentBrightness = Math.min(100, Math.max(0, Math.round(o.brightness)));
+      // Software path — complements OS backlight (which may soft-fail)
+      const filter = `brightness(${currentBrightness}%)`;
+      try {
+        document.documentElement.style.filter = filter;
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function applyPlaylist(pl) {
@@ -348,6 +380,9 @@
     window.adnabbit.onMaintenance?.((m) => {
       applyMaintenance(m);
       checkHoursAndPlay();
+    });
+    window.adnabbit.onOutput?.((o) => {
+      applyOutput(o);
     });
     window.adnabbit.onStatus((s) => {
       if (s.error) setStatus(`Error: ${s.error}`);

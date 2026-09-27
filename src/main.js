@@ -19,6 +19,7 @@ const {
 const api = require("./api");
 const { evaluateHours } = require("./open-hours");
 const offlinePolicyLib = require("./offline-policy");
+const outputLib = require("./output");
 
 /** Ticket R — report package version on heartbeat. */
 function getPlayerVersion() {
@@ -78,6 +79,8 @@ let lastOfflineCacheTtlHours = offlinePolicyLib.DEFAULT_TTL_HOURS;
 let lastApiOkAt = null;
 /** Current offline mode applied to renderer: null | play_cache | blackout */
 let lastOfflineMode = null;
+/** Ticket Y — last desired output from API (claim/heartbeat/playlist). */
+let lastDesiredOutput = null;
 
 
 function applyMaintenance(payload) {
@@ -591,6 +594,7 @@ async function refreshPlaylist() {
     applyDownloadHours(playlist.downloadHours, playlist.downloadAllowed);
     // Ticket V — persist offline play policy with cache
     applyOfflinePolicyFields(playlist);
+    maybeApplyDesiredOutput(playlist.output, "playlist");
     markApiOk();
     const downloadAllowed = lastDownloadAllowed !== false;
 
@@ -718,6 +722,52 @@ function scaleRemotePoint(ev) {
   return { x: Math.round(ev.x || 0), y: Math.round(ev.y || 0) };
 }
 
+
+/** Ticket Y — push volume/brightness to renderer + apply brightness OS path. */
+async function applyOutputLevels(partial, reason = "") {
+  if (!partial || typeof partial !== "object") return;
+  const sendToRenderer = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("player:output", payload);
+    }
+  };
+  const r = await outputLib.applySetOutput(partial, { sendToRenderer });
+  console.log(
+    `Ticket Y output applied${reason ? ` (${reason})` : ""} ` +
+      `volume=${r.lastApplied.volume} brightness=${r.lastApplied.brightness}` +
+      (r.result.brightness && r.result.brightness.softFail
+        ? ` [brightness soft-fail: ${r.result.brightness.reason}]`
+        : "")
+  );
+  return r;
+}
+
+function maybeApplyDesiredOutput(wire, reason) {
+  if (!wire || typeof wire !== "object") return;
+  const vol =
+    typeof wire.volume === "number" ? wire.volume : undefined;
+  const bri =
+    typeof wire.brightness === "number" ? wire.brightness : undefined;
+  if (vol === undefined && bri === undefined) return;
+  const cur = outputLib.getLastApplied();
+  const changed =
+    (vol !== undefined && vol !== cur.volume) ||
+    (bri !== undefined && bri !== cur.brightness);
+  lastDesiredOutput = {
+    volume: vol !== undefined ? vol : cur.volume,
+    brightness: bri !== undefined ? bri : cur.brightness,
+  };
+  if (changed || reason === "claim" || reason === "boot") {
+    void applyOutputLevels(
+      {
+        ...(vol !== undefined ? { volume: vol } : {}),
+        ...(bri !== undefined ? { brightness: bri } : {}),
+      },
+      reason
+    );
+  }
+}
+
 function applyRemoteInputEvents(events) {
   if (!Array.isArray(events) || events.length === 0) return;
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -743,6 +793,19 @@ function applyRemoteInputEvents(events) {
           scheduleDeviceReboot();
         } else if (ev.name === "restartApp") {
           scheduleAppRestart();
+        } else if (ev.name === "setOutput") {
+          console.log(
+            `remote command: setOutput volume=${ev.volume} brightness=${ev.brightness}`
+          );
+          void applyOutputLevels(
+            {
+              ...(typeof ev.volume === "number" ? { volume: ev.volume } : {}),
+              ...(typeof ev.brightness === "number"
+                ? { brightness: ev.brightness }
+                : {}),
+            },
+            "setOutput"
+          );
         } else {
           console.log("remote command ignored:", ev.name);
         }
@@ -842,10 +905,13 @@ async function doHeartbeat() {
   const creds = loadToken();
   if (!creds?.deviceToken) return;
   try {
+    const applied = outputLib.getLastApplied();
     const hb = await api.heartbeat(creds.deviceToken, {
       playbackState: lastPlaybackState,
       // Ticket R — surface version on fleet board (disk stats soft-miss / TODO)
       ...(PLAYER_VERSION ? { playerVersion: PLAYER_VERSION } : {}),
+      // Ticket Y — last-applied volume/brightness
+      output: { volume: applied.volume, brightness: applied.brightness },
     });
     // Ticket Q — refresh local hours cache from heartbeat
     if (hb?.hours) {
@@ -860,6 +926,8 @@ async function doHeartbeat() {
     applyDownloadHours(hb?.downloadHours, hb?.downloadAllowed);
     // Ticket V
     applyOfflinePolicyFields(hb);
+    // Ticket Y — sync desired sticky-resolved levels from server
+    maybeApplyDesiredOutput(hb?.output, "heartbeat");
     markApiOk();
     if (hb?.downloadAllowed === false) {
       console.log(
@@ -1061,6 +1129,7 @@ ipcMain.handle("setup:claim", async (_e, payload = {}) => {
     console.log(`Claiming against ${getApiBase()} …`);
     const result = await api.claim(codeRaw.toUpperCase());
     applyOfflinePolicyFields(result);
+    maybeApplyDesiredOutput(result.output, "claim");
     markApiOk();
     const tokenPayload = {
       deviceToken: result.deviceToken,

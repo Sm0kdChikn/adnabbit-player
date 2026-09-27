@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld("adnabbit", {
     ipcRenderer.on("player:maintenance", handler);
     return () => ipcRenderer.removeListener("player:maintenance", handler);
   },
+  /** Ticket Y — volume / brightness */
+  onOutput: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on("player:output", handler);
+    return () => ipcRenderer.removeListener("player:output", handler);
+  },
   playLog: (event) => ipcRenderer.invoke("player:play-log", event),
   /** Ticket Q/X — report LIVE | BLACKOUT | MAINTENANCE | IDLE | EMPTY */
   setPlaybackState: (state) =>

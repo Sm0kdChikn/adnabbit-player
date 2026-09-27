@@ -304,3 +304,16 @@ Claim / heartbeat / playlist may include `maintenance: { active, endsAt?, scope?
 
 Soft miss: auto-reboot into window. Hold Tickets Y–Z.
 
+## Ticket Y — Volume / brightness
+
+Player drains `setOutput` from the remote-control queue (same as `setKiosk`).
+
+| Apply | Path |
+|-------|------|
+| Volume | `<video>.volume` / unmute when > 0 (renderer via `player:output` IPC) |
+| Brightness | Linux `/sys/class/backlight/*/brightness`, else `xrandr --brightness`; **soft-fail** if both missing (CSS `filter: brightness()` still applied for content). |
+| Heartbeat | Reports `output: { volume, brightness }` last-applied |
+
+Desired levels also arrive on claim / heartbeat / playlist `output` and are applied when they change.
+
+Out of scope: CEC TV, sensors, per-creative gain, OptiSigns.
