@@ -49,10 +49,11 @@ async function getPlaylist(token) {
 }
 
 async function postPlayLogs(token, events) {
+  const list = Array.isArray(events) ? events : [];
   return apiFetch("/api/device/play-logs", {
     method: "POST",
     token,
-    body: events,
+    body: { events: list },
   });
 }
 

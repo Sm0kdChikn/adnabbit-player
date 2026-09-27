@@ -242,10 +242,16 @@
       reportPlaybackState("LIVE");
       // Ticket Q — mute PoP outside hours (guard again at emit time)
       if (isOpenNow()) {
+        // Ticket F2 — stable clientEventId for idempotent ingest
+        const clientEventId =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `play-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         window.adnabbit?.playLog?.({
+          clientEventId,
           creativeId: item.creativeId,
           scheduleId: item.scheduleId,
-          playedAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
           mimeType: item.mimeType,
         });
       }
@@ -258,10 +264,16 @@
       setStatus(`Showing ${item.creativeName} (${dwell / 1000}s)`);
       reportPlaybackState("LIVE");
       if (isOpenNow()) {
+        const clientEventId =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `play-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
         window.adnabbit?.playLog?.({
+          clientEventId,
           creativeId: item.creativeId,
           scheduleId: item.scheduleId,
-          playedAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          durationMs: dwell,
           mimeType: item.mimeType,
         });
       }

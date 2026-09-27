@@ -127,13 +127,22 @@ async function main() {
 
   savePlaylistCache({ ...playlist, cachedAt: new Date().toISOString() });
 
-  const logs = await api.postPlayLogs(creds.deviceToken, [
-    {
-      creativeId: playlist.items?.[0]?.creativeId,
-      playedAt: new Date().toISOString(),
-      stub: true,
-    },
-  ]);
+  const first = playlist.items?.[0];
+  const logs = first?.creativeId
+    ? await api.postPlayLogs(creds.deviceToken, [
+        {
+          clientEventId:
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `headless-${Date.now()}`,
+          creativeId: first.creativeId,
+          scheduleId: first.scheduleId,
+          startedAt: new Date().toISOString(),
+          durationMs: (first.durationHintSec || 10) * 1000,
+          mimeType: first.mimeType,
+        },
+      ])
+    : { skipped: true, reason: "empty_playlist" };
   console.log("play-logs", logs);
   console.log("OK");
 }

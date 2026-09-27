@@ -2,7 +2,7 @@
 
 Linux Electron kiosk player for [adnabbit](https://github.com/Sm0kdChikn/adnabbit).
 
-Pairs to a screen via a one-time claim code (GUI or CLI), heartbeats, polls the next-24h playlist, caches creatives locally, and loops video/image playback in a **fullscreen Electron kiosk**. **OptiSigns stays production PoP** — play-logs are accepted by the API as a **stub** (not persisted).
+Pairs to a screen via a one-time claim code (GUI or CLI), heartbeats, polls the next-24h playlist, caches creatives locally, and loops video/image playback in a **fullscreen Electron kiosk**. **OptiSigns stays production PoP** until cutover. **Ticket F2** (player **0.3.4**): play-logs POST `{ events }` with stable `clientEventId` + `startedAt` (+ `durationMs` for images); web persists `PlayLog`.
 
 ## Mini-PC (recommended)
 
@@ -202,7 +202,7 @@ Dev-session opt-in (current user only, no dedicated account):
 ```bash
 # After claim (no GUI required):
 npm run kiosk:headless
-# → heartbeat OK (+ playlistEpoch, commands.captureScreenshot/inputPending), input poll, playlist items, assets cached, play-logs 202
+# → heartbeat OK (+ playlistEpoch, commands.captureScreenshot/inputPending), input poll, playlist items, assets cached, play-logs 200 persisted
 
 npm start                      # Electron (setup if unpaired, else kiosk)
 ADNNABIT_KIOSK=0 npm start     # windowed/debug escape
@@ -254,7 +254,7 @@ Ticket **P.1.3** covers dedicated user + DM autologin + XDG AppImage autostart. 
 
 ## Out of scope
 
-Fleet management, custom ISO / Plymouth theme, F2 play-log persistence, OptiSigns cutover, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc).
+Fleet management, custom ISO / Plymouth theme, OptiSigns cutover, Stripe, in-app VNC/WebRTC (use Tailscale + wayvnc), durable offline play-log queue.
 
 ## Ticket Q — Soft blackout / PoP mute
 
@@ -317,3 +317,11 @@ Player drains `setOutput` from the remote-control queue (same as `setKiosk`).
 Desired levels also arrive on claim / heartbeat / playlist `output` and are applied when they change.
 
 Out of scope: CEC TV, sensors, per-creative gain, OptiSigns.
+
+## Ticket F2 — PlayLog emit (v0.3.4)
+
+- Each play start emits `clientEventId` (uuid), `creativeId`, `scheduleId?`, `startedAt`, optional `durationMs` (images use `durationHintSec`), `mimeType`.
+- `postPlayLogs` body is `{ events: [...] }` matching web ingest.
+- Existing mute paths (closed hours / maintenance / offline) still skip emit — server is source of truth.
+- Soft miss: durable offline queue; simple try/catch retry is enough for MVP.
+
