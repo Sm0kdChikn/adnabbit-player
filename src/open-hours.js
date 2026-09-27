@@ -1,6 +1,7 @@
 /**
  * Ticket Q — evaluate venue open hours locally (player-side).
  * Ticket X — maintenance soft blackout beats force-live.
+ * Ticket Q.1 / BH — overnight wrap when close < open (mirrors web).
  * Mirrors web lib/open-hours evaluateOpenState (SOFT blackout).
  */
 
@@ -30,6 +31,10 @@ function zonedParts(date, timeZone) {
     minutes: Number(get("hour")) * 60 + Number(get("minute")),
     isoWeekday: map[get("weekday")] || 1,
   };
+}
+
+function prevIsoWeekday(d) {
+  return d === 1 ? 7 : d - 1;
 }
 
 /**
@@ -94,6 +99,29 @@ function evaluateHours(hours, now = new Date(), maintenance = null) {
   }
   const parts = zonedParts(now, tz);
   const row = weekly.find((r) => r.weekday === parts.isoWeekday);
+  const prevRow = weekly.find(
+    (r) => r.weekday === prevIsoWeekday(parts.isoWeekday)
+  );
+
+  // Overnight spill from previous weekday into this calendar morning.
+  if (prevRow && prevRow.openTime && prevRow.closeTime) {
+    const prevOpen = parseHHMM(prevRow.openTime);
+    const prevClose = parseHHMM(prevRow.closeTime);
+    if (
+      prevOpen !== null &&
+      prevClose !== null &&
+      prevClose < prevOpen &&
+      parts.minutes < prevClose
+    ) {
+      return {
+        isOpen: true,
+        reason: "within_hours",
+        forceLiveActive: false,
+        maintenanceActive: false,
+      };
+    }
+  }
+
   if (!row || !row.openTime || !row.closeTime) {
     return {
       isOpen: false,
@@ -104,7 +132,7 @@ function evaluateHours(hours, now = new Date(), maintenance = null) {
   }
   const openMin = parseHHMM(row.openTime);
   const closeMin = parseHHMM(row.closeTime);
-  if (openMin === null || closeMin === null || closeMin <= openMin) {
+  if (openMin === null || closeMin === null || closeMin === openMin) {
     return {
       isOpen: false,
       reason: "closed_day",
@@ -112,7 +140,17 @@ function evaluateHours(hours, now = new Date(), maintenance = null) {
       maintenanceActive: false,
     };
   }
-  if (parts.minutes >= openMin && parts.minutes < closeMin) {
+  const overnight = closeMin < openMin;
+  if (overnight) {
+    if (parts.minutes >= openMin) {
+      return {
+        isOpen: true,
+        reason: "within_hours",
+        forceLiveActive: false,
+        maintenanceActive: false,
+      };
+    }
+  } else if (parts.minutes >= openMin && parts.minutes < closeMin) {
     return {
       isOpen: true,
       reason: "within_hours",
