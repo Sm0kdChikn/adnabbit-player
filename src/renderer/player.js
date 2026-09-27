@@ -16,6 +16,8 @@
   let playing = false;
   /** Ticket Q — cached hours from playlist/heartbeat */
   let hours = null;
+  /** Ticket X — maintenance soft blackout (beats force-live) */
+  let maintenance = null;
   let blackout = false;
   let hoursTimer = null;
   /** LIVE | BLACKOUT | IDLE | EMPTY */
@@ -71,8 +73,19 @@
     };
   }
 
-  /** Ticket Q — local open-hours check (works offline with cached payload). */
+  function maintenanceActiveNow() {
+    if (!maintenance || !maintenance.active) return false;
+    if (maintenance.endsAt) {
+      const end = Date.parse(maintenance.endsAt);
+      if (Number.isFinite(end) && Date.now() >= end) return false;
+    }
+    return true;
+  }
+
+  /** Ticket Q/X — open-hours + maintenance (works offline with cached payload). */
   function isOpenNow() {
+    // Ticket X — maintenance beats force-live
+    if (maintenanceActiveNow()) return false;
     if (!hours || hours.alwaysOpen) return true;
     const forceUntil = hours.forceLiveUntil
       ? Date.parse(hours.forceLiveUntil)
@@ -104,18 +117,31 @@
     image.removeAttribute("src");
   }
 
-  function showBlackout(detail) {
+  function showBlackout(detail, opts = {}) {
     blackout = true;
     stopMedia();
     idle.style.display = "none";
     if (blackoutEl) {
       blackoutEl.hidden = false;
       blackoutEl.style.display = "flex";
+      const title = blackoutEl.querySelector(".blackout-title");
+      if (title) {
+        title.textContent = opts.maintenance
+          ? "Maintenance"
+          : opts.offline
+            ? "Offline"
+            : "Closed";
+      }
     }
     if (blackoutDetail && detail) blackoutDetail.textContent = detail;
     document.body.classList.add("blackout");
-    setStatus("Closed hours · soft blackout");
-    reportPlaybackState("BLACKOUT");
+    if (opts.maintenance) {
+      setStatus("Maintenance · soft blackout");
+      reportPlaybackState("MAINTENANCE");
+    } else {
+      setStatus("Closed hours · soft blackout");
+      reportPlaybackState("BLACKOUT");
+    }
   }
 
   function hideBlackout() {
@@ -137,6 +163,16 @@
   }
 
   function formatNextWindow() {
+    if (maintenanceActiveNow()) {
+      if (maintenance.endsAt) {
+        try {
+          return `Maintenance until ${new Date(maintenance.endsAt).toLocaleString()}`;
+        } catch {
+          return "Maintenance in progress";
+        }
+      }
+      return maintenance.note || "Maintenance in progress";
+    }
     if (!hours) return "";
     if (hours.nextOpenAt) {
       try {
@@ -150,7 +186,9 @@
 
   function checkHoursAndPlay() {
     if (!isOpenNow()) {
-      showBlackout(formatNextWindow());
+      showBlackout(formatNextWindow(), {
+        maintenance: maintenanceActiveNow(),
+      });
       return;
     }
     if (blackout) hideBlackout();
@@ -159,7 +197,9 @@
 
   function playNext() {
     if (!isOpenNow()) {
-      showBlackout(formatNextWindow());
+      showBlackout(formatNextWindow(), {
+        maintenance: maintenanceActiveNow(),
+      });
       return;
     }
     hideBlackout();
@@ -230,6 +270,10 @@
     if (h && typeof h === "object") hours = h;
   }
 
+  function applyMaintenance(m) {
+    if (m && typeof m === "object") maintenance = m;
+  }
+
   function applyPlaylist(pl) {
     // Ticket V — offline policy blackout (distinct from closed hours)
     if (pl?.offlineMode === "blackout") {
@@ -239,13 +283,15 @@
       showBlackout(
         pl.offlinePolicy === "BLACKOUT"
           ? "Offline · host policy BLACKOUT"
-          : "Offline · cache TTL expired / no cache"
+          : "Offline · cache TTL expired / no cache",
+        { offline: true }
       );
       setStatus("Offline · soft blackout");
       return;
     }
     queue = pl?.items || [];
     if (pl?.hours) applyHours(pl.hours);
+    if (pl?.maintenance) applyMaintenance(pl.maintenance);
     const label = [pl?.hostName, pl?.screenName].filter(Boolean).join(" · ");
     if (label) {
       screenLabel.textContent =
@@ -289,6 +335,8 @@
         .join(" · ");
       if (boot.playlist?.hours) applyHours(boot.playlist.hours);
       if (boot.hours) applyHours(boot.hours);
+      if (boot.playlist?.maintenance) applyMaintenance(boot.playlist.maintenance);
+      if (boot.maintenance) applyMaintenance(boot.maintenance);
       if (boot.playlist) applyPlaylist(boot.playlist);
       else showIdle("Fetching playlist…");
     }
@@ -297,8 +345,14 @@
       applyHours(h);
       checkHoursAndPlay();
     });
+    window.adnabbit.onMaintenance?.((m) => {
+      applyMaintenance(m);
+      checkHoursAndPlay();
+    });
     window.adnabbit.onStatus((s) => {
       if (s.error) setStatus(`Error: ${s.error}`);
+      else if (blackout && maintenanceActiveNow())
+        setStatus("Maintenance · soft blackout");
       else if (blackout) setStatus("Closed hours · soft blackout");
       else if (s.offlineMode === "blackout")
         setStatus("Offline · soft blackout");

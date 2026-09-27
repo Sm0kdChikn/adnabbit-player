@@ -34,6 +34,11 @@ async function main() {
     console.log(
       `Ticket Q hours: isOpenNow=${hb.hours.isOpenNow} reason=${hb.hours.reason} tz=${hb.hours.timezone}`
     );
+    if (hb.maintenance) {
+      console.log(
+        `Ticket X maintenance: active=${hb.maintenance.active} endsAt=${hb.maintenance.endsAt || "-"} statusReason=${hb.statusReason || "-"}`
+      );
+    }
   }
   if (typeof hb?.playlistEpoch === "number") {
     console.log(`playlistEpoch: ${hb.playlistEpoch}`);
@@ -75,6 +80,11 @@ async function main() {
     console.log(
       `Ticket Q playlist hours: isOpenNow=${playlist.hours.isOpenNow} alwaysOpen=${playlist.hours.alwaysOpen}`
     );
+    if (playlist.maintenance) {
+      console.log(
+        `Ticket X playlist maintenance: active=${playlist.maintenance.active} endsAt=${playlist.maintenance.endsAt || "-"}`
+      );
+    }
   }
   if (typeof playlist.playlistEpoch === "number") {
     console.log(`playlistEpoch: ${playlist.playlistEpoch}`);

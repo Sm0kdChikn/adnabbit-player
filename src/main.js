@@ -66,6 +66,8 @@ let lastPlaylistEpoch = 0;
 let lastPlaybackState = "IDLE";
 /** Ticket Q — cached open-hours from playlist/heartbeat (PoP mute guard). */
 let lastHours = null;
+/** Ticket X — maintenance soft blackout (beats force-live). */
+let lastMaintenance = null;
 /** Ticket U — download/quiet hours; null = legacy allow. */
 let lastDownloadHours = null;
 let lastDownloadAllowed = true;
@@ -76,6 +78,23 @@ let lastOfflineCacheTtlHours = offlinePolicyLib.DEFAULT_TTL_HOURS;
 let lastApiOkAt = null;
 /** Current offline mode applied to renderer: null | play_cache | blackout */
 let lastOfflineMode = null;
+
+
+function applyMaintenance(payload) {
+  if (payload && typeof payload === "object") {
+    lastMaintenance = {
+      active: !!payload.active,
+      endsAt: payload.endsAt || null,
+      scope: payload.scope || null,
+      note: payload.note || null,
+    };
+  } else if (payload === null) {
+    lastMaintenance = { active: false, endsAt: null, scope: null, note: null };
+  }
+  if (lastMaintenance) {
+    mainWindow?.webContents.send("player:maintenance", lastMaintenance);
+  }
+}
 
 function applyDownloadHours(payload, explicitAllowed) {
   if (payload && typeof payload === "object") {
@@ -627,6 +646,10 @@ async function refreshPlaylist() {
       lastHours = playlist.hours;
       mainWindow?.webContents.send("player:hours", playlist.hours);
     }
+    if (playlist.maintenance) {
+      applyMaintenance(playlist.maintenance);
+      enriched.maintenance = lastMaintenance;
+    }
     savePlaylistCache(enriched);
     mainWindow?.webContents.send("player:playlist", enriched);
     mainWindow?.webContents.send("player:status", {
@@ -829,6 +852,10 @@ async function doHeartbeat() {
       lastHours = hb.hours;
       mainWindow?.webContents.send("player:hours", hb.hours);
     }
+    // Ticket X — maintenance soft blackout
+    if (hb?.maintenance) {
+      applyMaintenance(hb.maintenance);
+    }
     // Ticket U — download / quiet hours
     applyDownloadHours(hb?.downloadHours, hb?.downloadAllowed);
     // Ticket V
@@ -928,6 +955,7 @@ ipcMain.handle("player:get-bootstrap", () => {
   const creds = loadToken();
   const cached = loadPlaylistCache();
   if (cached?.hours) lastHours = cached.hours;
+  if (cached?.maintenance) lastMaintenance = cached.maintenance;
   if (cached) applyOfflinePolicyFields(cached);
   // Ticket V — optimistic: start grace from boot so we do not blackout before first poll
   if (creds?.deviceToken && lastApiOkAt == null) {
@@ -940,6 +968,7 @@ ipcMain.handle("player:get-bootstrap", () => {
     apiBase: getApiBase(),
     playlist: cached,
     hours: lastHours || cached?.hours || null,
+    maintenance: lastMaintenance || cached?.maintenance || null,
     downloadAllowed: lastDownloadAllowed,
     downloadHours: lastDownloadHours || cached?.downloadHours || null,
     offlinePolicy: lastOfflinePolicy,
@@ -952,7 +981,7 @@ ipcMain.handle("player:get-bootstrap", () => {
 
 ipcMain.handle("player:set-playback-state", (_e, state) => {
   const s = String(state || "").toUpperCase();
-  if (["LIVE", "BLACKOUT", "IDLE", "EMPTY"].includes(s)) {
+  if (["LIVE", "BLACKOUT", "MAINTENANCE", "IDLE", "EMPTY"].includes(s)) {
     lastPlaybackState = s;
   }
   return { ok: true, playbackState: lastPlaybackState };
@@ -962,20 +991,24 @@ ipcMain.handle("player:play-log", async (_e, event) => {
   const creds = loadToken();
   if (!creds?.deviceToken) return { skipped: true };
   // Ticket Q — never emit PoP while outside open hours (soft blackout)
+  // Ticket X — never emit PoP during maintenance (beats force-live)
   // Ticket V — never emit PoP while API stale / offline policy active
-  const open = evaluateHours(lastHours);
+  const open = evaluateHours(lastHours, new Date(), lastMaintenance);
   const apiStale = offlinePolicyLib.isApiStale(lastApiOkAt);
   if (
     !open.isOpen ||
     lastPlaybackState === "BLACKOUT" ||
+    lastPlaybackState === "MAINTENANCE" ||
     apiStale ||
     lastOfflineMode
   ) {
-    const reason = apiStale || lastOfflineMode
-      ? lastOfflineMode === "play_cache"
-        ? "offline_cache"
-        : "offline_blackout"
-      : "blackout";
+    const reason = open.maintenanceActive
+      ? "maintenance"
+      : apiStale || lastOfflineMode
+        ? lastOfflineMode === "play_cache"
+          ? "offline_cache"
+          : "offline_blackout"
+        : "blackout";
     console.log(`play-log muted — ${reason}`);
     return { skipped: true, reason };
   }

@@ -293,3 +293,14 @@ When the API is unreachable (or no successful contact within 5‑minute grace):
 - **PLAY_CACHE** within TTL → loop last good playlist (item windows stretched), mute PoP while offline
 
 Soft miss: per-screen override, P2P, OptiSigns.
+
+## Ticket X — Maintenance soft blackout
+
+Claim / heartbeat / playlist may include `maintenance: { active, endsAt?, scope?, note? }` and `statusReason: MAINTENANCE`.
+
+- When `maintenance.active` (and `endsAt` still in the future): soft blackout titled **Maintenance**, playback state `MAINTENANCE`, **no play-logs** (`reason=maintenance`).
+- **Beats force-live** and open hours (same gate order as the web API).
+- Cached with the playlist so a briefly offline player still enforces the window until `endsAt`.
+
+Soft miss: auto-reboot into window. Hold Tickets Y–Z.
+

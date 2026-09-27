@@ -1,5 +1,6 @@
 /**
  * Ticket Q — evaluate venue open hours locally (player-side).
+ * Ticket X — maintenance soft blackout beats force-live.
  * Mirrors web lib/open-hours evaluateOpenState (SOFT blackout).
  */
 
@@ -34,38 +35,97 @@ function zonedParts(date, timeZone) {
 /**
  * @param {object|null|undefined} hours — payload from playlist/heartbeat/claim
  * @param {Date} [now]
- * @returns {{ isOpen: boolean, reason: string, forceLiveActive: boolean }}
+ * @param {object|null|undefined} [maintenance] — { active, endsAt? }
+ * @returns {{ isOpen: boolean, reason: string, forceLiveActive: boolean, maintenanceActive: boolean }}
  */
-function evaluateHours(hours, now = new Date()) {
+function evaluateHours(hours, now = new Date(), maintenance = null) {
+  // Ticket X — maintenance beats force-live / open hours
+  if (maintenance && maintenance.active) {
+    if (maintenance.endsAt) {
+      const end = Date.parse(maintenance.endsAt);
+      if (Number.isFinite(end) && now.getTime() >= end) {
+        // Window expired locally (cached payload) — fall through
+      } else {
+        return {
+          isOpen: false,
+          reason: "maintenance",
+          forceLiveActive: false,
+          maintenanceActive: true,
+        };
+      }
+    } else {
+      return {
+        isOpen: false,
+        reason: "maintenance",
+        forceLiveActive: false,
+        maintenanceActive: true,
+      };
+    }
+  }
   if (!hours || hours.alwaysOpen) {
-    return { isOpen: true, reason: "always_open", forceLiveActive: false };
+    return {
+      isOpen: true,
+      reason: "always_open",
+      forceLiveActive: false,
+      maintenanceActive: false,
+    };
   }
   const forceUntil = hours.forceLiveUntil
     ? Date.parse(hours.forceLiveUntil)
     : NaN;
   if (Number.isFinite(forceUntil) && forceUntil > now.getTime()) {
-    return { isOpen: true, reason: "force_live", forceLiveActive: true };
+    return {
+      isOpen: true,
+      reason: "force_live",
+      forceLiveActive: true,
+      maintenanceActive: false,
+    };
   }
   // Prefer server-computed isOpenNow when fresh, but re-check weekly for offline drift
   const tz = hours.timezone || "America/Denver";
   const weekly = Array.isArray(hours.weekly) ? hours.weekly : [];
   if (weekly.length === 0) {
-    return { isOpen: true, reason: "always_open", forceLiveActive: false };
+    return {
+      isOpen: true,
+      reason: "always_open",
+      forceLiveActive: false,
+      maintenanceActive: false,
+    };
   }
   const parts = zonedParts(now, tz);
   const row = weekly.find((r) => r.weekday === parts.isoWeekday);
   if (!row || !row.openTime || !row.closeTime) {
-    return { isOpen: false, reason: "closed_day", forceLiveActive: false };
+    return {
+      isOpen: false,
+      reason: "closed_day",
+      forceLiveActive: false,
+      maintenanceActive: false,
+    };
   }
   const openMin = parseHHMM(row.openTime);
   const closeMin = parseHHMM(row.closeTime);
   if (openMin === null || closeMin === null || closeMin <= openMin) {
-    return { isOpen: false, reason: "closed_day", forceLiveActive: false };
+    return {
+      isOpen: false,
+      reason: "closed_day",
+      forceLiveActive: false,
+      maintenanceActive: false,
+    };
   }
   if (parts.minutes >= openMin && parts.minutes < closeMin) {
-    return { isOpen: true, reason: "within_hours", forceLiveActive: false };
+    return {
+      isOpen: true,
+      reason: "within_hours",
+      forceLiveActive: false,
+      maintenanceActive: false,
+    };
   }
-  return { isOpen: false, reason: "outside_hours", forceLiveActive: false };
+  return {
+    isOpen: false,
+    reason: "outside_hours",
+    forceLiveActive: false,
+    maintenanceActive: false,
+  };
 }
 
 module.exports = { evaluateHours, zonedParts, parseHHMM };

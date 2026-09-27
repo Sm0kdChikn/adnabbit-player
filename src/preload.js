@@ -23,8 +23,14 @@ contextBridge.exposeInMainWorld("adnabbit", {
     ipcRenderer.on("player:hours", handler);
     return () => ipcRenderer.removeListener("player:hours", handler);
   },
+  /** Ticket X — maintenance soft blackout (beats force-live) */
+  onMaintenance: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on("player:maintenance", handler);
+    return () => ipcRenderer.removeListener("player:maintenance", handler);
+  },
   playLog: (event) => ipcRenderer.invoke("player:play-log", event),
-  /** Ticket Q — report LIVE | BLACKOUT | IDLE | EMPTY for admin status */
+  /** Ticket Q/X — report LIVE | BLACKOUT | MAINTENANCE | IDLE | EMPTY */
   setPlaybackState: (state) =>
     ipcRenderer.invoke("player:set-playback-state", state),
 
